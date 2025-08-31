@@ -1,0 +1,77 @@
+
+# Unified Browser Platform - Python Agent Clean Requirements
+# Core browser automation (essential)
+browser-use>=0.6.1
+playwright>=1.54.0
+
+# AI/LLM providers (essential)
+openai>=1.99.2
+anthropic>=0.58.2
+google-genai>=1.29.0
+groq>=0.30.0
+ollama>=0.5.1
+
+# Environment and configuration (essential)
+python-dotenv>=1.0.1
+pydantic>=2.11.5
+pydantic-settings>=2.0.0
+
+# HTTP and networking (essential)
+requests>=2.32.3
+httpx>=0.28.1
+websockets>=12.0
+aiohttp>=3.12.0
+aiofiles>=24.1.0
+
+# Web scraping and parsing (essential)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+html5lib>=1.1
+markdownify>=1.1.0
+
+# Image and media processing (essential)
+Pillow>=10.0.0
+opencv-python>=4.11.0
+numpy>=2.3.2
+
+# Data handling and validation (essential)
+pandas>=2.0.0
+typing-extensions>=4.12.2
+uuid7>=0.1.0
+
+# Async support (essential)
+anyio>=4.9.0
+
+# Google API integration (essential)
+google-api-core>=2.25.0
+google-api-python-client>=2.174.0
+google-auth>=2.40.3
+google-auth-oauthlib>=1.2.2
+
+# PDF and document processing (essential)
+pypdf>=5.7.0
+
+# System and utilities (essential)
+psutil>=7.0.0
+portalocker>=2.7.0,<3.0.0
+screeninfo>=0.8.1
+
+# Authentication and security (essential)
+authlib>=1.6.0
+posthog>=3.7.0
+
+# Development and testing (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+ruff>=0.1.0
+mypy>=1.5.0
+
+# CLI tools (optional)
+rich>=14.0.0
+click>=8.1.8
+textual>=3.2.0
+
+# AWS integration (optional)
+boto3>=1.38.45
+botocore>=1.37.23

@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Full Browser Window Capture Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background-color: #f0f0f0;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      .stream-container {
+        margin: 20px 0;
+        text-align: center;
+      }
+      .stream-image {
+        max-width: 100%;
+        border: 2px solid #ddd;
+        border-radius: 4px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      }
+      .controls {
+        margin: 20px 0;
+        text-align: center;
+      }
+      button {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        margin: 5px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+      .status {
+        margin: 10px 0;
+        padding: 10px;
+        border-radius: 4px;
+        font-weight: bold;
+      }
+      .status.connected {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+      .status.disconnected {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+      .info {
+        background: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+        padding: 15px;
+        border-radius: 4px;
+        margin: 20px 0;
+      }
+      .frame-info {
+        background: #e2e3e5;
+        color: #383d41;
+        border: 1px solid #d6d8db;
+        padding: 10px;
+        border-radius: 4px;
+        margin: 10px 0;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🧪 Full Browser Window Capture Test</h1>
+
+      <div class="info">
+        <h3>What This Test Does:</h3>
+        <p>
+          This page tests the full browser window capture functionality, which
+          should show:
+        </p>
+        <ul>
+          <li>✅ Browser tabs and address bar</li>
+          <li>✅ Browser UI elements (bookmarks, menu, etc.)</li>
+          <li>✅ Full browser window including all chrome elements</li>
+          <li>✅ Real-time streaming at 10 FPS</li>
+        </ul>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" onclick="startStreaming()">
+          🚀 Start Streaming
+        </button>
+        <button id="stopBtn" onclick="stopStreaming()" disabled>
+          🛑 Stop Streaming
+        </button>
+        <button id="testBtn" onclick="testNavigation()" disabled>
+          🌐 Test Navigation
+        </button>
+      </div>
+
+      <div id="status" class="status disconnected">
+        🔴 Disconnected - Click "Start Streaming" to begin
+      </div>
+
+      <div class="stream-container">
+        <img
+          id="streamImage"
+          class="stream-image"
+          style="display: none"
+          alt="Browser Stream"
+        />
+        <div
+          id="placeholder"
+          style="
+            padding: 100px;
+            text-align: center;
+            color: #666;
+            border: 2px dashed #ddd;
+          "
+        >
+          <h3>📺 Stream will appear here</h3>
+          <p>
+            Click "Start Streaming" to begin capturing the full browser window
+          </p>
+        </div>
+      </div>
+
+      <div class="frame-info">
+        <strong>Frame Info:</strong>
+        <div>Total Frames: <span id="frameCount">0</span></div>
+        <div>Last Frame Size: <span id="lastFrameSize">0</span> bytes</div>
+        <div>Streaming Time: <span id="streamingTime">0</span>s</div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      let socket;
+      let isStreaming = false;
+      let frameCount = 0;
+      let startTime = 0;
+      let streamInterval;
+
+      function updateStatus(message, isConnected) {
+        const statusEl = document.getElementById("status");
+        statusEl.textContent = message;
+        statusEl.className = `status ${isConnected ? "connected" : "disconnected"}`;
+      }
+
+      function updateFrameInfo() {
+        document.getElementById("frameCount").textContent = frameCount;
+        if (startTime > 0) {
+          const elapsed = Math.floor((Date.now() - startTime) / 1000);
+          document.getElementById("streamingTime").textContent = elapsed;
+        }
+      }
+
+      function startStreaming() {
+        if (isStreaming) return;
+
+        // Get session ID from URL or use a default test session
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionId =
+          urlParams.get("sessionId") || "test-session-" + Date.now();
+
+        console.log("🚀 Starting streaming for session:", sessionId);
+
+        // Connect to Socket.IO
+        socket = io();
+
+        socket.on("connect", () => {
+          console.log("✅ Connected to server");
+          updateStatus("🟢 Connected to server", true);
+
+          // Join the session
+          socket.emit("join-session", sessionId);
+          console.log("📡 Joined session:", sessionId);
+        });
+
+        socket.on("video-frame", (frameData) => {
+          try {
+            frameCount++;
+            const imageBlob = new Blob([frameData], { type: "image/jpeg" });
+            const imageUrl = URL.createObjectURL(imageBlob);
+
+            const img = document.getElementById("streamImage");
+            img.src = imageUrl;
+            img.style.display = "block";
+            document.getElementById("placeholder").style.display = "none";
+
+            document.getElementById("lastFrameSize").textContent =
+              frameData.length;
+            updateFrameInfo();
+
+            // Clean up previous blob URL
+            setTimeout(() => URL.revokeObjectURL(imageUrl), 100);
+          } catch (error) {
+            console.error("❌ Error processing frame:", error);
+          }
+        });
+
+        socket.on("disconnect", () => {
+          console.log("❌ Disconnected from server");
+          updateStatus("🔴 Disconnected from server", false);
+          isStreaming = false;
+          updateControls();
+        });
+
+        isStreaming = true;
+        startTime = Date.now();
+        updateControls();
+        updateStatus("🟡 Connecting to stream...", false);
+      }
+
+      function stopStreaming() {
+        if (!isStreaming) return;
+
+        if (socket) {
+          socket.disconnect();
+        }
+
+        isStreaming = false;
+        updateControls();
+        updateStatus("🔴 Streaming stopped", false);
+
+        // Hide stream image
+        document.getElementById("streamImage").style.display = "none";
+        document.getElementById("placeholder").style.display = "block";
+      }
+
+      function updateControls() {
+        document.getElementById("startBtn").disabled = isStreaming;
+        document.getElementById("stopBtn").disabled = !isStreaming;
+        document.getElementById("testBtn").disabled = !isStreaming;
+      }
+
+      function testNavigation() {
+        if (!isStreaming) return;
+
+        // This would trigger navigation in the browser session
+        console.log("🌐 Testing navigation...");
+        alert("Navigation test would be triggered in the browser session");
+      }
+
+      // Update frame info every second
+      setInterval(updateFrameInfo, 1000);
+
+      // Clean up on page unload
+      window.addEventListener("beforeunload", () => {
+        if (socket) {
+          socket.disconnect();
+        }
+      });
+    </script>
+  </body>
+</html>
+

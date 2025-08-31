@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🤖 Unified Browser Platform</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        color: #333;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .header {
+        text-align: center;
+        color: white;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        font-size: 3em;
+        margin-bottom: 10px;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .header p {
+        font-size: 1.2em;
+        opacity: 0.9;
+      }
+
+      .main-content {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 20px;
+        height: calc(100vh - 200px);
+      }
+
+      .sidebar {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(10px);
+        overflow-y: auto;
+      }
+
+      .viewer {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(10px);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .section {
+        margin-bottom: 25px;
+      }
+
+      .section h3 {
+        color: #4a5568;
+        margin-bottom: 15px;
+        font-size: 1.1em;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .status-indicator {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #e53e3e;
+        transition: background 0.3s;
+      }
+
+      .status-indicator.connected {
+        background: #38a169;
+      }
+
+      .status-indicator.connecting {
+        background: #d69e2e;
+      }
+
+      .input-group {
+        margin-bottom: 15px;
+      }
+
+      .input-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 500;
+        color: #4a5568;
+      }
+
+      input,
+      textarea,
+      select {
+        width: 100%;
+        padding: 10px;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      .btn {
+        background: #667eea;
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.3s;
+        width: 100%;
+        margin-bottom: 10px;
+      }
+
+      .btn:hover {
+        background: #5a67d8;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+      }
+
+      .btn:disabled {
+        background: #a0aec0;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .btn.secondary {
+        background: #4a5568;
+      }
+
+      .btn.secondary:hover {
+        background: #2d3748;
+      }
+
+      .btn.danger {
+        background: #e53e3e;
+      }
+
+      .btn.danger:hover {
+        background: #c53030;
+      }
+
+      .browser-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .browser-toolbar {
+        background: #2d3748;
+        padding: 10px 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .browser-toolbar input {
+        flex: 1;
+        margin: 0;
+      }
+
+      .browser-toolbar button {
+        background: #4a5568;
+        color: white;
+        border: none;
+        padding: 8px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .browser-screen {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #1a202c;
+        position: relative;
+      }
+
+      #browserCanvas {
+        max-width: 100%;
+        max-height: 100%;
+        border: none;
+        cursor: crosshair;
+      }
+
+      .placeholder {
+        text-align: center;
+        color: #a0aec0;
+      }
+
+      .placeholder h3 {
+        font-size: 1.5em;
+        margin-bottom: 10px;
+      }
+
+      .logs {
+        background: #1a202c;
+        color: #e2e8f0;
+        padding: 15px;
+        border-radius: 8px;
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .log-entry {
+        margin-bottom: 5px;
+        padding: 2px 0;
+      }
+
+      .log-entry.info {
+        color: #63b3ed;
+      }
+      .log-entry.success {
+        color: #68d391;
+      }
+      .log-entry.warning {
+        color: #fbd38d;
+      }
+      .log-entry.error {
+        color: #fc8181;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+
+      .stat-card {
+        background: #f7fafc;
+        padding: 10px;
+        border-radius: 8px;
+        text-align: center;
+      }
+
+      .stat-card .value {
+        font-size: 1.5em;
+        font-weight: bold;
+        color: #667eea;
+      }
+
+      .stat-card .label {
+        font-size: 0.9em;
+        color: #4a5568;
+      }
+
+      .session-list {
+        margin-top: 15px;
+        border-top: 1px solid #e2e8f0;
+        padding-top: 15px;
+      }
+
+      .session-list h4 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: #4a5568;
+      }
+
+      .session-items {
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .session-item {
+        background: #f7fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 12px;
+      }
+
+      .session-item:hover {
+        background: #edf2f7;
+        border-color: #667eea;
+      }
+
+      .session-item.active {
+        background: #667eea;
+        color: white;
+        border-color: #667eea;
+      }
+
+      .session-item .session-id {
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+
+      .session-item .session-info {
+        color: #718096;
+        font-size: 11px;
+      }
+
+      .session-item.active .session-info {
+        color: #e2e8f0;
+      }
+
+      .no-sessions {
+        text-align: center;
+        color: #a0aec0;
+        font-style: italic;
+        padding: 20px;
+      }
+
+      .ai-section {
+        border-top: 2px solid #e2e8f0;
+        padding-top: 20px;
+      }
+
+      .task-status {
+        background: #f7fafc;
+        padding: 10px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        font-size: 14px;
+      }
+
+      .progress-bar {
+        background: #e2e8f0;
+        height: 6px;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-top: 5px;
+      }
+
+      .progress-fill {
+        background: #667eea;
+        height: 100%;
+        width: 0%;
+        transition: width 0.3s;
+      }
+
+      /* Token Usage Styles */
+      .token-usage-section {
+        border-top: 2px solid #e2e8f0;
+        padding-top: 20px;
+        margin-top: 20px;
+      }
+
+      .token-usage-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+
+      .token-stat-card {
+        background: #f7fafc;
+        padding: 10px;
+        border-radius: 8px;
+        text-align: center;
+        border: 1px solid #e2e8f0;
+      }
+
+      .token-stat-card .value {
+        font-size: 1.2em;
+        font-weight: bold;
+        color: #667eea;
+      }
+
+      .token-stat-card .label {
+        font-size: 0.8em;
+        color: #4a5568;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .token-usage-details {
+        background: #f7fafc;
+        padding: 10px;
+        border-radius: 8px;
+        margin-top: 10px;
+        border: 1px solid #e2e8f0;
+        display: none;
+      }
+
+      .token-usage-entry {
+        padding: 8px;
+        border-bottom: 1px solid #e2e8f0;
+        margin-bottom: 5px;
+      }
+
+      .token-usage-entry:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+      }
+
+      .token-usage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+      }
+
+      .token-model {
+        font-weight: 600;
+        color: #4a5568;
+      }
+
+      .token-cost {
+        font-weight: bold;
+        color: #667eea;
+      }
+
+      .token-usage-details-info {
+        font-size: 0.9em;
+        color: #718096;
+      }
+
+      .token-usage-time {
+        font-size: 0.8em;
+        color: #a0aec0;
+        font-style: italic;
+      }
+
+      @media (max-width: 768px) {
+        .main-content {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 1fr;
+        }
+
+        .sidebar {
+          order: 2;
+          max-height: 400px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🤖 Unified Browser Platform</h1>
+        <p>AI-Powered Browser Automation with Real-Time Streaming</p>
+      </div>
+
+      <div class="main-content">
+        <div class="sidebar">
+          <!-- Connection Status -->
+          <div class="section">
+            <h3>
+              <span class="status-indicator" id="connectionStatus"></span>
+              Connection
+            </h3>
+            <div class="input-group">
+              <button class="btn" id="connectBtn">Connect</button>
+            </div>
+          </div>
+
+          <!-- Session Management -->
+          <div class="section">
+            <h3>🎯 Session Management</h3>
+            <div class="input-group">
+              <button class="btn" id="createSessionBtn">
+                ➕ Create New Session
+              </button>
+              <button class="btn secondary" id="closeSessionBtn" disabled>
+                ❌ Close Current Session
+              </button>
+              <button class="btn secondary" id="switchSessionBtn" disabled>
+                🔄 Switch Session
+              </button>
+            </div>
+            <div class="stats">
+              <div class="stat-card">
+                <div class="value" id="sessionCount">0</div>
+                <div class="label">Active Sessions</div>
+              </div>
+              <div class="stat-card">
+                <div class="value" id="frameCount">0</div>
+                <div class="label">Frames</div>
+              </div>
+            </div>
+
+            <!-- Session List -->
+            <div class="session-list" id="sessionList">
+              <h4>🖥️ Active Sessions</h4>
+              <div class="session-items" id="sessionItems">
+                <div class="no-sessions">No active sessions</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Browser Controls -->
+          <div class="section">
+            <h3>🌐 Browser</h3>
+            <div class="input-group">
+              <label>Navigate to URL:</label>
+              <input
+                type="url"
+                id="urlInput"
+                placeholder="https://example.com"
+              />
+              <button class="btn" id="navigateBtn" disabled>Go</button>
+            </div>
+            <div class="input-group">
+              <button class="btn secondary" id="refreshBtn" disabled>
+                Refresh
+              </button>
+              <button class="btn secondary" id="screenshotBtn" disabled>
+                Screenshot
+              </button>
+            </div>
+            <div class="input-group">
+              <button class="btn" id="formFillingBtn" disabled>
+                📝 Enable Form Filling
+              </button>
+              <div
+                class="form-filling-status"
+                id="formFillingStatus"
+                style="display: none"
+              >
+                <span class="status-indicator connected"></span>
+                <span>Form filling active</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Agent -->
+          <div class="section ai-section">
+            <h3>🤖 AI Agent</h3>
+            <div class="input-group">
+              <label>Task:</label>
+              <textarea
+                id="taskInput"
+                rows="3"
+                placeholder="Describe what you want the AI to do..."
+              ></textarea>
+            </div>
+            <div class="input-group">
+              <label>Model:</label>
+              <select id="modelSelect">
+                <option value="gpt-4">GPT-4 (Azure)</option>
+                <option value="gpt-4-turbo">GPT-4 Turbo (Azure)</option>
+                <option value="gpt-35-turbo">GPT-3.5 Turbo (Azure)</option>
+                <option value="gpt-4o">GPT-4o (Azure)</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <button class="btn" id="executeTaskBtn" disabled>
+                Execute Task
+              </button>
+              <button class="btn danger" id="cancelTaskBtn" disabled>
+                Cancel
+              </button>
+            </div>
+
+            <div id="taskStatus" class="task-status" style="display: none">
+              <div id="taskStatusText">Idle</div>
+              <div class="progress-bar">
+                <div class="progress-fill" id="taskProgress"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Token Usage -->
+          <div class="section token-usage-section">
+            <h3>💰 Token Usage</h3>
+            <div class="input-group">
+              <button class="btn secondary" id="refreshTokenUsageBtn">
+                🔄 Refresh Usage
+              </button>
+              <button class="btn secondary" id="clearTokenHistoryBtn">
+                🗑️ Clear History
+              </button>
+            </div>
+            <div class="token-usage-stats">
+              <div class="token-stat-card">
+                <div class="value" id="totalTokenCost">$0.00</div>
+                <div class="label">Total Cost</div>
+              </div>
+              <div class="token-stat-card">
+                <div class="value" id="totalTokens">0</div>
+                <div class="label">Total Tokens</div>
+              </div>
+            </div>
+            <div class="token-stat-card">
+              <div class="value" id="totalExecutions">0</div>
+              <div class="label">Executions</div>
+            </div>
+            <div id="tokenUsageDetails" class="token-usage-details">
+              <h4>Recent Usage History</h4>
+              <div id="tokenHistory"></div>
+            </div>
+          </div>
+
+          <!-- Logs -->
+          <div class="section">
+            <h3>📋 Logs</h3>
+            <div class="logs" id="logsContainer">
+              <div class="log-entry info">[INFO] Platform ready</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="viewer">
+          <div class="browser-container">
+            <div class="browser-toolbar">
+              <input
+                type="url"
+                id="addressBar"
+                placeholder="Browser URL will appear here"
+                readonly
+              />
+              <button id="backBtn">←</button>
+              <button id="forwardBtn">→</button>
+              <button id="reloadBtn">↻</button>
+            </div>
+
+            <div class="browser-screen">
+              <canvas id="browserCanvas" width="1280" height="720"></canvas>
+              <div class="placeholder" id="placeholder">
+                <h3>🌐 Browser Stream</h3>
+                <p>
+                  Create a session and navigate to a website to start streaming
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="client.js"></script>
+  </body>
+</html>

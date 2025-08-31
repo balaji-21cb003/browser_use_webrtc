@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🎥 WebRTC Live Browser Stream</title>
+    <script>
+      // Force HTTP protocol and prevent HTTPS upgrades
+      if (window.location.protocol === "https:") {
+        window.location.href = window.location.href.replace("https:", "http:");
+      }
+
+      // Dynamically load socket.io.js with explicit HTTP protocol
+      function loadSocketIO() {
+        const script = document.createElement("script");
+        script.src =
+          window.location.protocol +
+          "//" +
+          window.location.host +
+          "/socket.io/socket.io.js";
+        script.onload = function () {
+          console.log("Socket.IO loaded successfully");
+          // Initialize the streaming client after Socket.IO loads
+          if (typeof io !== "undefined") {
+            new WebRTCStreamingClient();
+          }
+        };
+        script.onerror = function () {
+          console.error("Failed to load Socket.IO");
+        };
+        document.head.appendChild(script);
+      }
+
+      // Load Socket.IO when page loads
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", loadSocketIO);
+      } else {
+        loadSocketIO();
+      }
+    </script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #000;
+        color: #fff;
+      }
+
+      .streaming-container {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+        background: #000;
+        overflow: hidden;
+        position: relative;
+        margin: 0;
+        padding: 0;
+      }
+
+      .browser-screen {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+        background: #000;
+        position: absolute;
+        top: 0;
+        left: 0;
+        margin: 0;
+        padding: 0;
+      }
+
+      #browserCanvas {
+        width: 100vw !important;
+        height: 100vh !important;
+        object-fit: cover;
+        border: none;
+        cursor: pointer;
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        background: #000;
+        margin: 0;
+        padding: 0;
+      }
+
+      .placeholder {
+        text-align: center;
+        color: #a0aec0;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 10;
+      }
+
+      .placeholder h3 {
+        font-size: 1.8em;
+        margin-bottom: 10px;
+        color: #e2e8f0;
+      }
+
+      .placeholder p {
+        font-size: 1.1em;
+        opacity: 0.8;
+      }
+
+      /* Ripple animation for click feedback */
+      @keyframes ripple {
+        0% {
+          transform: scale(0);
+          opacity: 1;
+        }
+        100% {
+          transform: scale(4);
+          opacity: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="streaming-container">
+      <div class="browser-screen">
+        <canvas id="browserCanvas" width="1920" height="1680"></canvas>
+        <div class="placeholder" id="placeholder">
+          <h3>🌐 Connecting to Browser Stream</h3>
+          <p>Loading...</p>
+        </div>
+
+        <!-- Tab Management UI -->
+        <div
+          id="tabsContainer"
+          style="
+            display: none;
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            z-index: 1000;
+            max-width: 400px;
+            font-size: 12px;
+          "
+        >
+          <div style="font-weight: bold; margin-bottom: 8px">
+            🗂️ Browser Tabs
+          </div>
+          <div id="tabsList" style="max-height: 150px; overflow-y: auto">
+            <!-- Tabs will be populated here -->
+          </div>
+        </div>
+
+        <!-- Active Tab Info -->
+        <div
+          id="activeTabInfo"
+          style="
+            display: none;
+            position: fixed;
+            bottom: 40px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            z-index: 1000;
+            font-size: 11px;
+            max-width: 300px;
+          "
+        >
+          <div id="activeTabTitle">Loading...</div>
+          <div id="activeTabUrl" style="opacity: 0.7; margin-top: 2px">
+            Loading...
+          </div>
+        </div>
+
+        <!-- Interaction Status Indicator -->
+        <div
+          id="interactionStatus"
+          style="
+            display: none;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 255, 0, 0.9);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+            font-weight: bold;
+          "
+        >
+          ✅ Interactions Ready
+        </div>
+
+        <!-- Security Blocked Indicator -->
+        <div
+          id="securityBlocked"
+          style="
+            display: none;
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+            font-weight: bold;
+          "
+        >
+          🚫 Action Blocked
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class WebRTCStreamingClient {
+        constructor() {
+          // Get session ID from URL
+          this.sessionId = this.getSessionIdFromUrl();
+
+          // Elements - Full screen canvas only
+          this.canvas = document.getElementById("browserCanvas");
+          this.ctx = this.canvas.getContext("2d");
+          this.placeholder = document.getElementById("placeholder");
+
+          // Stats
+          this.frameCount = 0;
+          this.currentSession = this.sessionId;
+
+          // Tab management
+          this.tabs = [];
+          this.activeTabId = null;
+
+          // WebRTC components
+          this.peerConnection = null;
+          this.localStream = null;
+          this.remoteStream = null;
+
+          this.init();
+        }
+
+        getSessionIdFromUrl() {
+          // Try URL params first
+          const urlParams = new URLSearchParams(window.location.search);
+          let sessionId = urlParams.get("sessionId");
+
+          // If not in params, try to extract from path
+          if (!sessionId) {
+            const pathParts = window.location.pathname.split("/");
+            sessionId = pathParts[pathParts.length - 1];
+          }
+
+          return sessionId || "unknown";
+        }
+
+        init() {
+          this.setupCanvas();
+          this.connect();
+
+          // Debug canvas dimensions
+          setTimeout(() => {
+            const rect = this.canvas.getBoundingClientRect();
+            console.log("🔧 Canvas Info:");
+            console.log(
+              `🖥️ Internal: ${this.canvas.width}x${this.canvas.height}`,
+            );
+            console.log(
+              `📱 Display: ${rect.width.toFixed(1)}x${rect.height.toFixed(1)}`,
+            );
+            console.log("🎯 Ready for interactions!");
+          }, 1000);
+        }
+
+        // High-quality canvas setup
+        setupCanvas() {
+          // Enable high-quality rendering
+          this.ctx.imageSmoothingEnabled = true;
+          this.ctx.imageSmoothingQuality = "high";
+
+          // Set canvas to full screen with proper dimensions
+          const updateCanvasSize = () => {
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+            this.canvas.style.width = "100vw";
+            this.canvas.style.height = "100vh";
+
+            // Log canvas dimensions for debugging
+            console.log(
+              `🔧 Canvas resized to: ${this.canvas.width}x${this.canvas.height}`,
+            );
+          };
+
+          // Initial setup
+          updateCanvasSize();
+
+          this.img = new Image();
+          this.img.onload = () => {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.drawImage(
+              this.img,
+              0,
+              0,
+              this.canvas.width,
+              this.canvas.height,
+            );
+          };
+
+          // Add interactive event listeners
+          this.setupCanvasInteractions();
+
+          // Handle window resize with debouncing
+          let resizeTimeout = null;
+          window.addEventListener("resize", () => {
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(updateCanvasSize, 100);
+          });
+        }
+
+        // Full mouse interaction system
+        setupCanvasInteractions() {
+          let isDragging = false;
+          let lastMousePosition = { x: 0, y: 0 };
+          let dragStartPosition = { x: 0, y: 0 };
+
+          // Mouse down events
+          this.canvas.addEventListener("mousedown", (e) => {
+            if (!this.currentSession) return;
+
+            const coords = this.getScaledCoordinates(e);
+            if (!coords) return;
+
+            isDragging = true;
+            dragStartPosition = { x: coords.x, y: coords.y };
+            lastMousePosition = { x: coords.x, y: coords.y };
+
+            const button =
+              e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
+            this.sendMouseEvent("mousedown", coords.x, coords.y, 0, 0, button);
+          });
+
+          // Mouse move events with throttling for better performance
+          let moveTimeout = null;
+          this.canvas.addEventListener("mousemove", (e) => {
+            if (!this.currentSession) return;
+
+            const coords = this.getScaledCoordinates(e);
+            if (!coords) return;
+
+            // Throttle mouse move events for better performance
+            if (moveTimeout) return;
+
+            if (
+              isDragging ||
+              Math.abs(coords.x - lastMousePosition.x) > 5 ||
+              Math.abs(coords.y - lastMousePosition.y) > 5
+            ) {
+              moveTimeout = setTimeout(() => {
+                this.sendMouseEvent("mousemove", coords.x, coords.y);
+                lastMousePosition = { x: coords.x, y: coords.y };
+                moveTimeout = null;
+              }, 16); // ~60fps throttling
+            }
+          });
+
+          // Mouse up events
+          this.canvas.addEventListener("mouseup", (e) => {
+            if (!this.currentSession) return;
+
+            const coords = this.getScaledCoordinates(e);
+            if (!coords) {
+              isDragging = false;
+              return;
+            }
+
+            const button =
+              e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
+            this.sendMouseEvent("mouseup", coords.x, coords.y, 0, 0, button);
+
+            // If it was a short drag, treat it as a click
+            const dragDistance = Math.sqrt(
+              Math.pow(coords.x - dragStartPosition.x, 2) +
+                Math.pow(coords.y - dragStartPosition.y, 2),
+            );
+
+            if (dragDistance < 5) {
+              this.sendMouseEvent("click", coords.x, coords.y);
+            }
+
+            isDragging = false;
+          });
+
+          // Click events
+          this.canvas.addEventListener("click", (e) => {
+            if (!this.currentSession || isDragging) return;
+            const coords = this.getScaledCoordinates(e);
+            if (!coords) return;
+            this.sendMouseEvent("click", coords.x, coords.y);
+          });
+
+          // Mouse wheel events
+          this.canvas.addEventListener("wheel", (e) => {
+            if (!this.currentSession) return;
+            e.preventDefault();
+
+            const coords = this.getScaledCoordinates(e);
+            if (!coords) return;
+
+            const deltaX = e.deltaX || 0;
+            const deltaY = e.deltaY || 0;
+
+            this.sendMouseEvent("scroll", coords.x, coords.y, deltaX, deltaY);
+          });
+
+          // Prevent context menu on right click
+          this.canvas.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+          });
+
+          // Keyboard events
+          window.addEventListener("keydown", (e) => {
+            if (!this.currentSession) return;
+
+            if (
+              e.target.tagName === "INPUT" ||
+              e.target.tagName === "TEXTAREA"
+            ) {
+              return;
+            }
+
+            if (e.key.length > 1 || e.ctrlKey || e.altKey || e.metaKey) {
+              e.preventDefault();
+              this.sendKeyboardEvent("keydown", e.key);
+              return;
+            }
+
+            if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+              e.preventDefault();
+              this.sendKeyboardEvent("type", "", e.key);
+            }
+          });
+
+          window.addEventListener("keyup", (e) => {
+            if (!this.currentSession) return;
+
+            if (
+              e.target.tagName === "INPUT" ||
+              e.target.tagName === "TEXTAREA"
+            ) {
+              return;
+            }
+
+            if (e.key.length > 1 || e.ctrlKey || e.altKey || e.metaKey) {
+              e.preventDefault();
+              this.sendKeyboardEvent("keyup", e.key);
+            }
+          });
+        }
+
+        // Precise coordinate scaling
+        getScaledCoordinates(e) {
+          const rect = this.canvas.getBoundingClientRect();
+
+          // Get raw click position relative to canvas
+          const rawClickX = e.clientX - rect.left;
+          const rawClickY = e.clientY - rect.top;
+
+          // Use actual canvas dimensions for accurate mapping
+          const canvasWidth = this.canvas.width;
+          const canvasHeight = this.canvas.height;
+
+          // Direct coordinate mapping from display to canvas internal coordinates
+          const x = (rawClickX / rect.width) * canvasWidth;
+          const y = (rawClickY / rect.height) * canvasHeight;
+
+          // Ensure coordinates are within bounds
+          const clampedX = Math.max(0, Math.min(canvasWidth - 1, x));
+          const clampedY = Math.max(0, Math.min(canvasHeight - 1, y));
+
+          // Debug coordinate transformation
+          console.log(
+            `🎯 Raw: (${rawClickX.toFixed(1)}, ${rawClickY.toFixed(1)}) → Canvas: (${clampedX.toFixed(1)}, ${clampedY.toFixed(1)}) | Canvas: ${canvasWidth}x${canvasHeight} | Display: ${rect.width.toFixed(1)}x${rect.height.toFixed(1)}`,
+          );
+
+          return {
+            x: clampedX,
+            y: clampedY,
+          };
+        }
+
+        // Send mouse events to server
+        sendMouseEvent(type, x, y, deltaX = 0, deltaY = 0, button = "left") {
+          if (!this.socket || !this.currentSession) {
+            console.warn("Cannot send mouse event - no socket or session");
+            return;
+          }
+
+          // Validate coordinates
+          if (
+            x < 0 ||
+            y < 0 ||
+            isNaN(x) ||
+            isNaN(y) ||
+            x >= this.canvas.width ||
+            y >= this.canvas.height
+          ) {
+            console.warn("Invalid coordinates:", {
+              x,
+              y,
+              canvasWidth: this.canvas.width,
+              canvasHeight: this.canvas.height,
+            });
+            return;
+          }
+
+          const preciseX = Math.round(x);
+          const preciseY = Math.round(y);
+
+          // Only log for important events to reduce console spam
+          if (type === "click" || type === "mousedown") {
+            console.log(
+              `🖱️ Sending ${type} event to (${preciseX}, ${preciseY})`,
+            );
+          }
+
+          this.socket.emit("mouse-event", {
+            type,
+            x: preciseX,
+            y: preciseY,
+            deltaX: Math.round(deltaX),
+            deltaY: Math.round(deltaY),
+            button,
+            timestamp: Date.now(),
+          });
+
+          // Visual feedback for clicks
+          if (type === "click") {
+            this.showClickFeedback(preciseX, preciseY);
+          }
+        }
+
+        // Send keyboard events
+        sendKeyboardEvent(type, key, text = "") {
+          if (!this.socket || !this.currentSession) return;
+
+          if (type === "type" && text.length === 0) return;
+
+          this.socket.emit("keyboard-event", {
+            type,
+            key,
+            text,
+            timestamp: Date.now(),
+          });
+        }
+
+        // Visual click feedback
+        showClickFeedback(x, y) {
+          const rect = this.canvas.getBoundingClientRect();
+
+          // Convert canvas coordinates back to display coordinates
+          const displayX = (x / this.canvas.width) * rect.width;
+          const displayY = (y / this.canvas.height) * rect.height;
+
+          const ripple = document.createElement("div");
+          ripple.style.position = "absolute";
+          ripple.style.left = `${displayX - 15}px`;
+          ripple.style.top = `${displayY - 15}px`;
+          ripple.style.width = "30px";
+          ripple.style.height = "30px";
+          ripple.style.borderRadius = "50%";
+          ripple.style.background = "rgba(255, 0, 0, 0.8)";
+          ripple.style.border = "3px solid rgba(255, 255, 255, 0.9)";
+          ripple.style.animation = "ripple 0.8s ease-out";
+          ripple.style.pointerEvents = "none";
+          ripple.style.zIndex = "1000";
+
+          this.canvas.parentElement.style.position = "relative";
+          this.canvas.parentElement.appendChild(ripple);
+
+          setTimeout(() => {
+            if (ripple.parentElement) {
+              ripple.parentElement.removeChild(ripple);
+            }
+          }, 800);
+        }
+
+        // Show security blocked message
+        showSecurityBlocked(message) {
+          const blockedIndicator = document.getElementById("securityBlocked");
+          if (blockedIndicator) {
+            blockedIndicator.textContent = `🚫 ${message}`;
+            blockedIndicator.style.display = "block";
+
+            // Hide after 3 seconds
+            setTimeout(() => {
+              blockedIndicator.style.display = "none";
+            }, 3000);
+          }
+
+          console.warn("🚫 Security action blocked:", message);
+        }
+
+        // Prevent browser/tab closure
+        preventBrowserClosure() {
+          window.addEventListener("beforeunload", (e) => {
+            e.preventDefault();
+            e.returnValue =
+              "⚠️ Closing this tab will end your session. Are you sure?";
+            return e.returnValue;
+          });
+
+          // Prevent right-click context menu
+          document.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            this.showSecurityBlocked("Right-click context menu disabled");
+            return false;
+          });
+
+          // Prevent F5 refresh
+          document.addEventListener("keydown", (e) => {
+            if (e.key === "F5" || (e.ctrlKey && e.key === "r")) {
+              e.preventDefault();
+              this.showSecurityBlocked(
+                "Page refresh blocked for session security",
+              );
+              return false;
+            }
+          });
+
+          console.log("🔒 Browser closure protection enabled");
+        }
+
+        connect() {
+          try {
+            this.socket = io({
+              transports: ["polling", "websocket"],
+              upgrade: true,
+              rememberUpgrade: false,
+              forceNew: true,
+              secure: false,
+              rejectUnauthorized: false,
+            });
+
+            this.setupSocketEvents();
+          } catch (error) {
+            console.error("Failed to connect:", error);
+          }
+        }
+
+        setupSocketEvents() {
+          this.socket.on("connect", () => {
+            console.log("Connected to server");
+            console.log("Attempting to join session:", this.sessionId);
+            this.socket.emit("join-session", { sessionId: this.sessionId });
+          });
+
+          this.socket.on("disconnect", () => {
+            console.log("Disconnected from server");
+          });
+
+          this.socket.on("session-joined", (data) => {
+            console.log("Session joined:", data);
+            this.currentSession = data.sessionId || this.sessionId;
+            this.enableSessionControls();
+            // Request initial frame to start the stream
+            this.requestInitialFrame();
+          });
+
+          // WebRTC Signaling Events
+          this.socket.on("webrtc-offer", (offer) => {
+            this.handleOffer(offer);
+          });
+
+          this.socket.on("webrtc-answer", (answer) => {
+            this.handleAnswer(answer);
+          });
+
+          this.socket.on("webrtc-ice-candidate", (candidate) => {
+            this.handleIceCandidate(candidate);
+          });
+
+          // Canvas stream started event
+          this.socket.on("canvas-stream-started", (data) => {
+            console.log("🎨 Canvas stream started:", data);
+            this.placeholder.textContent = "Loading stream...";
+          });
+
+          // Canvas-based video frame handling
+          this.socket.on("video-frame", (frameData) => {
+            this.frameCount++;
+            console.log(
+              `📹 Received video frame ${this.frameCount}: ${typeof frameData === "string" ? frameData.length + " chars" : frameData.length + " bytes"}`,
+            );
+
+            // Handle both string (base64) and object formats
+            let base64Frame;
+            if (typeof frameData === "string") {
+              base64Frame = frameData;
+            } else if (frameData && frameData.data) {
+              base64Frame = frameData.data;
+            } else {
+              console.warn("Unexpected frame data format:", typeof frameData);
+              return;
+            }
+
+            this.img.src = "data:image/jpeg;base64," + base64Frame;
+            this.placeholder.style.display = "none";
+
+            if (!this.currentSession) {
+              this.currentSession = this.sessionId;
+              this.enableSessionControls();
+            }
+          });
+
+          this.socket.on("error", (error) => {
+            console.error("Socket error:", error);
+          });
+
+          // Handle blocked keyboard shortcuts
+          this.socket.on("keyboard-blocked", (data) => {
+            console.warn("🚫 Keyboard shortcut blocked:", data);
+            this.showSecurityBlocked(data.message);
+          });
+
+          // ===== TAB MANAGEMENT EVENTS =====
+
+          // Available tabs received
+          this.socket.on("available-tabs", (data) => {
+            console.log("📑 Received available tabs:", data);
+            this.tabs = data.tabs || [];
+            this.activeTabId = data.activeTabId;
+            this.updateTabsUI();
+          });
+
+          // Tab switched successfully
+          this.socket.on("tab-switched", (data) => {
+            console.log("🔄 Tab switched:", data);
+            this.activeTabId = data.tabId;
+            this.updateActiveTabInfo(data.activeTab);
+            this.requestAvailableTabs(); // Refresh tabs list
+          });
+
+          // Tab changed (broadcast from other clients)
+          this.socket.on("tab-changed", (data) => {
+            console.log("📢 Tab changed (broadcast):", data);
+            this.activeTabId = data.activeTabId;
+            this.updateActiveTabInfo(data.activeTab);
+            this.requestAvailableTabs(); // Refresh tabs list
+          });
+
+          // Active tab info received
+          this.socket.on("active-tab-info", (data) => {
+            console.log("📋 Active tab info:", data);
+            this.updateActiveTabInfo(data.activeTab);
+          });
+
+          // Tab switch error
+          this.socket.on("tab-switch-error", (data) => {
+            console.error("❌ Tab switch failed:", data);
+            this.showSecurityBlocked(`Failed to switch tab: ${data.message}`);
+          });
+        }
+
+        requestCanvasStream() {
+          try {
+            console.log(
+              "🎨 Requesting canvas stream for session:",
+              this.sessionId,
+            );
+            this.socket.emit("request-canvas-stream", {
+              sessionId: this.sessionId,
+            });
+          } catch (error) {
+            console.error("Failed to request canvas stream:", error);
+          }
+        }
+
+        requestInitialFrame() {
+          try {
+            console.log(
+              "🎨 Requesting initial frame for session:",
+              this.sessionId,
+            );
+            this.socket.emit("request-frame", {
+              sessionId: this.sessionId,
+            });
+          } catch (error) {
+            console.error("Failed to request initial frame:", error);
+          }
+        }
+
+        async initWebRTC() {
+          try {
+            console.log("Initializing WebRTC...");
+
+            this.peerConnection = new RTCPeerConnection({
+              iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+            });
+
+            this.peerConnection.ontrack = (event) => {
+              console.log("Received remote stream");
+              this.remoteStream = event.streams[0];
+              this.setupVideoStream();
+              this.placeholder.style.display = "none";
+            };
+
+            this.peerConnection.onicecandidate = (event) => {
+              if (event.candidate) {
+                this.socket.emit("webrtc-ice-candidate", {
+                  sessionId: this.sessionId,
+                  candidate: event.candidate,
+                });
+              }
+            };
+
+            this.socket.emit("request-webrtc-stream", {
+              sessionId: this.sessionId,
+            });
+          } catch (error) {
+            console.error("WebRTC initialization failed:", error);
+            this.socket.emit("request-canvas-stream", {
+              sessionId: this.sessionId,
+            });
+          }
+        }
+
+        async handleOffer(offer) {
+          try {
+            await this.peerConnection.setRemoteDescription(offer);
+            const answer = await this.peerConnection.createAnswer();
+            await this.peerConnection.setLocalDescription(answer);
+
+            this.socket.emit("webrtc-answer", {
+              sessionId: this.sessionId,
+              answer: answer,
+            });
+          } catch (error) {
+            console.error("Failed to handle WebRTC offer:", error);
+          }
+        }
+
+        async handleAnswer(answer) {
+          try {
+            await this.peerConnection.setRemoteDescription(answer);
+          } catch (error) {
+            console.error("Failed to handle WebRTC answer:", error);
+          }
+        }
+
+        async handleIceCandidate(candidate) {
+          try {
+            await this.peerConnection.addIceCandidate(candidate);
+          } catch (error) {
+            console.error("Failed to add ICE candidate:", error);
+          }
+        }
+
+        setupVideoStream() {
+          const video = document.createElement("video");
+          video.srcObject = this.remoteStream;
+          video.autoplay = true;
+          video.muted = true;
+          video.style.display = "none";
+
+          video.setAttribute("playsinline", true);
+          video.setAttribute("webkit-playsinline", true);
+
+          document.body.appendChild(video);
+
+          const drawFrame = () => {
+            if (video.readyState >= 2) {
+              this.frameCount++;
+
+              this.ctx.imageSmoothingEnabled = true;
+              this.ctx.imageSmoothingQuality = "high";
+
+              this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+              this.ctx.drawImage(
+                video,
+                0,
+                0,
+                this.canvas.width,
+                this.canvas.height,
+              );
+            }
+            requestAnimationFrame(drawFrame);
+          };
+
+          video.addEventListener("loadedmetadata", () => {
+            console.log("Video metadata loaded, starting rendering");
+            drawFrame();
+          });
+
+          video.addEventListener("loadeddata", () => {
+            console.log("Video data loaded");
+            this.placeholder.style.display = "none";
+          });
+        }
+
+        enableSessionControls() {
+          console.log("✅ Session controls enabled for:", this.currentSession);
+          this.canvas.style.cursor = "pointer";
+
+          // Show interaction status
+          console.log("🎯 User interactions are now active!");
+          console.log(
+            "🖱️ Click, scroll, and type on the canvas to control the remote browser",
+          );
+
+          // Show visual indicator
+          const statusIndicator = document.getElementById("interactionStatus");
+          if (statusIndicator) {
+            statusIndicator.style.display = "block";
+          }
+
+          // Enable tab management
+          this.initializeTabManagement();
+
+          // Enable browser closure protection
+          this.preventBrowserClosure();
+
+          // Test interaction readiness
+          setTimeout(() => {
+            if (this.currentSession && this.socket?.connected) {
+              console.log(
+                "✅ Ready for user interactions - try clicking on form fields!",
+              );
+            }
+          }, 1000);
+        }
+
+        // ===== TAB MANAGEMENT METHODS =====
+
+        initializeTabManagement() {
+          console.log("🗂️ Initializing tab management...");
+
+          // Show tab UI
+          document.getElementById("tabsContainer").style.display = "block";
+          document.getElementById("activeTabInfo").style.display = "block";
+
+          // Request initial tabs and active tab info
+          this.requestAvailableTabs();
+          this.requestActiveTabInfo();
+
+          // Refresh tabs periodically
+          setInterval(() => {
+            if (this.currentSession && this.socket?.connected) {
+              this.requestAvailableTabs();
+            }
+          }, 5000); // Every 5 seconds
+        }
+
+        requestAvailableTabs() {
+          if (!this.socket || !this.currentSession) return;
+
+          this.socket.emit("get-available-tabs", {
+            sessionId: this.currentSession,
+          });
+        }
+
+        requestActiveTabInfo() {
+          if (!this.socket || !this.currentSession) return;
+
+          this.socket.emit("get-active-tab", {
+            sessionId: this.currentSession,
+          });
+        }
+
+        switchToTab(tabId) {
+          if (!this.socket || !this.currentSession) return;
+
+          console.log(`🔄 Switching to tab: ${tabId}`);
+          this.socket.emit("switch-to-tab", {
+            sessionId: this.currentSession,
+            tabId: tabId,
+          });
+        }
+
+        updateTabsUI() {
+          const tabsList = document.getElementById("tabsList");
+          if (!tabsList) return;
+
+          tabsList.innerHTML = "";
+
+          if (this.tabs.length === 0) {
+            tabsList.innerHTML =
+              '<div style="opacity: 0.7;">No tabs available</div>';
+            return;
+          }
+
+          this.tabs.forEach((tab) => {
+            const tabElement = document.createElement("div");
+            tabElement.style.cssText = `
+              padding: 6px 8px;
+              margin: 2px 0;
+              border-radius: 4px;
+              cursor: pointer;
+              border: 1px solid ${tab.isActive ? "#4CAF50" : "transparent"};
+              background: ${tab.isActive ? "rgba(76, 175, 80, 0.2)" : "transparent"};
+              transition: all 0.2s;
+              font-size: 11px;
+              line-height: 1.3;
+            `;
+
+            tabElement.innerHTML = `
+              <div style="font-weight: ${tab.isActive ? "bold" : "normal"};">
+                ${tab.isActive ? "🔸" : "🔹"} ${this.truncateText(tab.title || "Untitled", 25)}
+              </div>
+              <div style="opacity: 0.6; font-size: 10px;">
+                ${this.truncateText(tab.url || "", 35)}
+              </div>
+            `;
+
+            tabElement.addEventListener("click", () => {
+              if (!tab.isActive) {
+                this.switchToTab(tab.id);
+              }
+            });
+
+            tabElement.addEventListener("mouseenter", () => {
+              if (!tab.isActive) {
+                tabElement.style.background = "rgba(255, 255, 255, 0.1)";
+              }
+            });
+
+            tabElement.addEventListener("mouseleave", () => {
+              if (!tab.isActive) {
+                tabElement.style.background = "transparent";
+              }
+            });
+
+            tabsList.appendChild(tabElement);
+          });
+        }
+
+        updateActiveTabInfo(activeTab) {
+          const titleElement = document.getElementById("activeTabTitle");
+          const urlElement = document.getElementById("activeTabUrl");
+
+          if (titleElement && urlElement) {
+            if (activeTab) {
+              titleElement.textContent = `🔸 ${this.truncateText(activeTab.title || "Untitled", 30)}`;
+              urlElement.textContent = this.truncateText(
+                activeTab.url || "",
+                40,
+              );
+            } else {
+              titleElement.textContent = "🔸 No active tab";
+              urlElement.textContent = "";
+            }
+          }
+        }
+
+        truncateText(text, maxLength) {
+          if (!text) return "";
+          return text.length > maxLength
+            ? text.substring(0, maxLength) + "..."
+            : text;
+        }
+      }
+    </script>
+  </body>
+</html>
