@@ -65,7 +65,7 @@ export function createBrowserUseRoutes(
         session = await sessionManager.createSession({
           width: 1920,
           height: 1480, // Taller to capture full Chrome UI
-          timeout: 30 * 60 * 1000, // 30 minutes
+          timeout: parseInt(process.env.SESSION_TIMEOUT) || 30 * 60 * 1000, // Environment variable or 30 minutes
           autoClose: true,
           description: `Task: ${task}`,
         });
@@ -132,6 +132,62 @@ export function createBrowserUseRoutes(
           },
           req,
         )
+        .then((result) => {
+          // Task completed successfully - schedule session cleanup
+          logger.info(
+            `✅ Task ${taskId} completed successfully, scheduling session cleanup`,
+          );
+
+          // Get cleanup delay from environment (default 2 minutes)
+          const cleanupDelay =
+            parseInt(process.env.SESSION_CLEANUP_DELAY) || 2 * 60 * 1000;
+
+          // Check if force cleanup is enabled
+          const forceCleanup =
+            process.env.FORCE_CLEANUP_ON_TASK_COMPLETE === "true";
+
+          if (forceCleanup) {
+            logger.info(
+              `🧹 Scheduling session ${session.id} cleanup in ${cleanupDelay}ms after task completion`,
+            );
+
+            setTimeout(async () => {
+              try {
+                // Close browser session
+                if (browserService) {
+                  logger.info(`🌐 Closing browser session ${session.id}`);
+                  await browserService.closeBrowser(session.id);
+                }
+
+                // Destroy session in session manager
+                logger.info(`🗑️ Destroying session ${session.id}`);
+                await sessionManager.destroySession(session.id);
+
+                // Notify connected clients via WebSocket
+                if (io) {
+                  io.to(session.id).emit("session-cleanup", {
+                    sessionId: session.id,
+                    reason: "task_completion",
+                    message: `Session ${session.id} has been cleaned up after task completion. Please refresh to start a new session.`,
+                  });
+                }
+
+                logger.info(
+                  `✅ Session ${session.id} cleanup completed after task completion`,
+                );
+              } catch (cleanupError) {
+                logger.error(
+                  `❌ Error during session cleanup for ${session.id}:`,
+                  cleanupError,
+                );
+              }
+            }, cleanupDelay);
+          } else {
+            logger.info(
+              `⏭️ Session ${session.id} cleanup skipped (FORCE_CLEANUP_ON_TASK_COMPLETE=false)`,
+            );
+          }
+        })
         .catch((error) => {
           logger.error(`Task ${taskId} execution failed:`, error);
         });

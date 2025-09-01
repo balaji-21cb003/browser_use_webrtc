@@ -19,13 +19,12 @@ export class SessionManager extends EventEmitter {
   async initialize() {
     this.logger.info("📋 Initializing Session Manager...");
 
-    // Start cleanup interval (every 5 minutes)
-    this.cleanupInterval = setInterval(
-      () => {
-        this.cleanupInactiveSessions();
-      },
-      5 * 60 * 1000
-    );
+    // Start cleanup interval (configurable via environment)
+    const cleanupInterval =
+      parseInt(process.env.SESSION_CLEANUP_CHECK_INTERVAL) || 5 * 60 * 1000; // Default 5 minutes
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupInactiveSessions();
+    }, cleanupInterval);
 
     this.isInitialized = true;
     this.logger.info("✅ Session Manager initialized");
@@ -42,7 +41,10 @@ export class SessionManager extends EventEmitter {
       browser: null,
       clients: new Set(),
       options: {
-        timeout: options.timeout || 30 * 60 * 1000, // 30 minutes default
+        timeout:
+          options.timeout ||
+          parseInt(process.env.SESSION_TIMEOUT) ||
+          30 * 60 * 1000, // Environment variable or 30 minutes default
         autoClose: options.autoClose !== false, // default to auto-close
         width: options.width || 1280,
         height: options.height || 720,
@@ -154,7 +156,7 @@ export class SessionManager extends EventEmitter {
         } catch (error) {
           this.logger.warn(
             `Error closing browser for session ${sessionId}:`,
-            error
+            error,
           );
         }
       }
@@ -191,7 +193,7 @@ export class SessionManager extends EventEmitter {
     }
 
     this.logger.info(
-      `✅ All sessions deleted: ${results.length} sessions processed`
+      `✅ All sessions deleted: ${results.length} sessions processed`,
     );
     return {
       success: true,
@@ -216,7 +218,7 @@ export class SessionManager extends EventEmitter {
 
     if (sessionsToCleanup.length > 0) {
       this.logger.info(
-        `🧹 Cleaning up ${sessionsToCleanup.length} inactive sessions`
+        `🧹 Cleaning up ${sessionsToCleanup.length} inactive sessions`,
       );
 
       for (const sessionId of sessionsToCleanup) {
@@ -257,7 +259,7 @@ export class SessionManager extends EventEmitter {
     // Destroy all sessions
     const sessionIds = Array.from(this.sessions.keys());
     const destroyPromises = sessionIds.map((sessionId) =>
-      this.destroySession(sessionId)
+      this.destroySession(sessionId),
     );
 
     await Promise.allSettled(destroyPromises);

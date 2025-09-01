@@ -882,11 +882,9 @@ class UnifiedBrowserPlatform {
     setInterval(
       async () => {
         try {
-          const cleanedCount =
-            await this.sessionManager.cleanupExpiredSessions();
-          if (cleanedCount > 0) {
-            this.logger.info(`🧹 Cleaned up ${cleanedCount} expired sessions`);
-          }
+          // Use the existing cleanup method from SessionManager
+          this.sessionManager.cleanupInactiveSessions();
+          this.logger.debug("🧹 Periodic cleanup check completed");
         } catch (error) {
           this.logger.error("Failed to cleanup expired sessions:", error);
         }

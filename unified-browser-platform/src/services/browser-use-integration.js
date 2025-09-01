@@ -39,6 +39,23 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Task tracking
     this.activeTasks = new Map(); // Track active tasks by taskId
     this.taskHistory = []; // Store completed tasks
+
+    // Concurrent execution configuration
+    this.concurrencyConfig = {
+      maxConcurrentTasks: parseInt(process.env.MAX_CONCURRENT_TASKS) || 5,
+      taskQueueLimit: parseInt(process.env.TASK_QUEUE_LIMIT) || 20,
+      enableConcurrentExecution:
+        (process.env.ENABLE_CONCURRENT_EXECUTION === "true") !== false, // Default to true
+    };
+
+    // Task queue for handling concurrency limits
+    this.taskQueue = [];
+    this.runningTasks = new Set();
+
+    this.logger.info(
+      "🔧 Concurrent execution configuration:",
+      this.concurrencyConfig,
+    );
   }
 
   async testPythonPath(pythonPath) {
@@ -667,34 +684,92 @@ export class BrowserUseIntegrationService extends EventEmitter {
           if (this.activeAgents.has(executionId)) {
             this.activeAgents.get(executionId).currentStep = stepNumber;
           }
-          eventData = { stepNumber, message: trimmedLine };
+
+          // **ENHANCED: Add task ID and session ID to step logging**
+          const enhancedStepMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+
+          // Log the enhanced step message to console for better debugging
+          console.log(`🔍 [AGENT] INFO ${enhancedStepMessage}`);
+
+          eventData = {
+            stepNumber,
+            message: enhancedStepMessage,
+            taskId: executionId,
+            sessionId: sessionId,
+            originalMessage: trimmedLine,
+          };
         }
       } else if (trimmedLine.includes("🦾 [ACTION")) {
         eventType = "action";
-        eventData = { action: trimmedLine, message: trimmedLine };
+        const enhancedActionMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+        console.log(`🔍 [AGENT] INFO ${enhancedActionMessage}`);
+        eventData = {
+          action: trimmedLine,
+          message: enhancedActionMessage,
+          taskId: executionId,
+          sessionId: sessionId,
+          originalMessage: trimmedLine,
+        };
       } else if (trimmedLine.includes("🎯 Next goal:")) {
         eventType = "goal";
+        const enhancedGoalMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+        console.log(`🔍 [AGENT] INFO ${enhancedGoalMessage}`);
         eventData = {
           goal: trimmedLine.replace("🎯 Next goal:", "").trim(),
-          message: trimmedLine,
+          message: enhancedGoalMessage,
+          taskId: executionId,
+          sessionId: sessionId,
+          originalMessage: trimmedLine,
         };
       } else if (
         trimmedLine.includes("👍 Eval: Success") ||
         trimmedLine.includes("✅")
       ) {
         eventType = "success";
-        eventData = { success: true, message: trimmedLine };
+        const enhancedSuccessMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+        console.log(`🔍 [AGENT] INFO ${enhancedSuccessMessage}`);
+        eventData = {
+          success: true,
+          message: enhancedSuccessMessage,
+          taskId: executionId,
+          sessionId: sessionId,
+          originalMessage: trimmedLine,
+        };
       } else if (
         trimmedLine.includes("⚠️ Eval: Failure") ||
         trimmedLine.includes("❌")
       ) {
         eventType = "warning";
-        eventData = { warning: true, message: trimmedLine };
+        const enhancedWarningMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+        console.log(`🔍 [AGENT] INFO ${enhancedWarningMessage}`);
+        eventData = {
+          warning: true,
+          message: enhancedWarningMessage,
+          taskId: executionId,
+          sessionId: sessionId,
+          originalMessage: trimmedLine,
+        };
       } else if (trimmedLine.includes("🔗 Navigated to")) {
         eventType = "navigation";
-        eventData = { navigation: true, message: trimmedLine };
+        const enhancedNavMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+        console.log(`🔍 [AGENT] INFO ${enhancedNavMessage}`);
+        eventData = {
+          navigation: true,
+          message: enhancedNavMessage,
+          taskId: executionId,
+          sessionId: sessionId,
+          originalMessage: trimmedLine,
+        };
       } else if (trimmedLine.includes("INFO") || trimmedLine.includes("🧠")) {
         eventType = "info";
+        // Add task/session info to general INFO messages too
+        const enhancedInfoMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
+        eventData = {
+          message: enhancedInfoMessage,
+          taskId: executionId,
+          sessionId: sessionId,
+          originalMessage: trimmedLine,
+        };
       }
 
       this.emit("taskProgress", {
@@ -1888,14 +1963,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
   async executeTaskAsync(sessionId, task, taskId, options, req) {
     try {
       console.log("============EXECUTING TASK", taskId);
-      this.logger.info(`🚀 Starting background task execution: ${taskId}`);
+      this.logger.info(
+        `🚀 Starting task execution: ${taskId} (concurrent: ${this.concurrencyConfig.enableConcurrentExecution})`,
+      );
 
       // Register task as started
-      this.activeTasks.set(taskId, {
+      const taskInfo = {
         taskId,
         sessionId,
         task,
-        status: "started",
+        status: "queued",
         progress: 0,
         startedAt: new Date().toISOString(),
         options,
@@ -1904,32 +1981,29 @@ export class BrowserUseIntegrationService extends EventEmitter {
           userAgent: req.get("User-Agent"),
           timestamp: new Date().toISOString(),
         },
-      });
+      };
 
-      // Execute the task using the existing executeTask method
-      const result = await this.executeTask(sessionId, task, {
-        ...options,
-        taskId,
-        useExistingBrowser: true,
-      });
+      this.activeTasks.set(taskId, taskInfo);
 
-      // Update task status
-      const taskInfo = this.activeTasks.get(taskId);
-      if (taskInfo) {
-        taskInfo.status = "completed";
-        taskInfo.progress = 100;
-        taskInfo.completedAt = new Date().toISOString();
-        taskInfo.result = result;
+      if (this.concurrencyConfig.enableConcurrentExecution) {
+        // Concurrent execution mode
+        return this.executeConcurrentTask(
+          sessionId,
+          task,
+          taskId,
+          options,
+          taskInfo,
+        );
+      } else {
+        // Sequential execution mode (original behavior)
+        return this.executeSequentialTask(
+          sessionId,
+          task,
+          taskId,
+          options,
+          taskInfo,
+        );
       }
-
-      // Move to history
-      if (taskInfo) {
-        this.taskHistory.push(taskInfo);
-        this.activeTasks.delete(taskId);
-      }
-
-      this.logger.info(`✅ Task ${taskId} completed successfully`);
-      return result;
     } catch (error) {
       this.logger.error(`❌ Task ${taskId} execution failed:`, error);
 
@@ -1940,10 +2014,6 @@ export class BrowserUseIntegrationService extends EventEmitter {
         taskInfo.error = error.message;
         taskInfo.failedAt = new Date().toISOString();
         taskInfo.progress = 0;
-      }
-
-      // Move to history even if failed
-      if (taskInfo) {
         this.taskHistory.push(taskInfo);
         this.activeTasks.delete(taskId);
       }
@@ -1951,4 +2021,171 @@ export class BrowserUseIntegrationService extends EventEmitter {
       throw error;
     }
   }
+
+  // ============== NEW CONCURRENT EXECUTION METHODS ==============
+
+  async executeConcurrentTask(sessionId, task, taskId, options, taskInfo) {
+    // Check if we're at the concurrent task limit
+    if (this.runningTasks.size >= this.concurrencyConfig.maxConcurrentTasks) {
+      // Check if queue is full
+      if (this.taskQueue.length >= this.concurrencyConfig.taskQueueLimit) {
+        throw new Error(
+          `Task queue is full (${this.concurrencyConfig.taskQueueLimit} tasks). Please try again later.`,
+        );
+      }
+
+      // Add to queue
+      this.logger.info(
+        `⏳ Task ${taskId} queued (${this.runningTasks.size}/${this.concurrencyConfig.maxConcurrentTasks} slots busy)`,
+      );
+      taskInfo.status = "queued";
+
+      return new Promise((resolve, reject) => {
+        this.taskQueue.push({
+          sessionId,
+          task,
+          taskId,
+          options,
+          taskInfo,
+          resolve,
+          reject,
+        });
+      });
+    }
+
+    // Execute immediately
+    return this.executeTaskImmediately(
+      sessionId,
+      task,
+      taskId,
+      options,
+      taskInfo,
+    );
+  }
+
+  async executeSequentialTask(sessionId, task, taskId, options, taskInfo) {
+    // Original sequential behavior - wait for task completion
+    taskInfo.status = "started";
+
+    const result = await this.executeTask(sessionId, task, {
+      ...options,
+      taskId,
+      useExistingBrowser: true,
+    });
+
+    // Update task status
+    if (taskInfo) {
+      taskInfo.status = "completed";
+      taskInfo.progress = 100;
+      taskInfo.completedAt = new Date().toISOString();
+      taskInfo.result = result;
+      this.taskHistory.push(taskInfo);
+      this.activeTasks.delete(taskId);
+    }
+
+    this.logger.info(`✅ Task ${taskId} completed successfully`);
+    return result;
+  }
+
+  async executeTaskImmediately(sessionId, task, taskId, options, taskInfo) {
+    this.runningTasks.add(taskId);
+    taskInfo.status = "running";
+    taskInfo.actualStartedAt = new Date().toISOString();
+
+    this.logger.info(
+      `🏃 Task ${taskId} started immediately (${this.runningTasks.size}/${this.concurrencyConfig.maxConcurrentTasks} running)`,
+    );
+
+    try {
+      // Execute task without awaiting (fire and forget for concurrency)
+      const taskPromise = this.executeTask(sessionId, task, {
+        ...options,
+        taskId,
+        useExistingBrowser: true,
+      });
+
+      // Handle task completion asynchronously
+      taskPromise
+        .then((result) => {
+          // Task completed successfully
+          const currentTaskInfo = this.activeTasks.get(taskId);
+          if (currentTaskInfo) {
+            currentTaskInfo.status = "completed";
+            currentTaskInfo.progress = 100;
+            currentTaskInfo.completedAt = new Date().toISOString();
+            currentTaskInfo.result = result;
+            this.taskHistory.push(currentTaskInfo);
+            this.activeTasks.delete(taskId);
+          }
+
+          this.logger.info(`✅ Task ${taskId} completed successfully`);
+          this.onTaskCompleted(taskId);
+        })
+        .catch((error) => {
+          // Task failed
+          this.logger.error(`❌ Task ${taskId} execution failed:`, error);
+
+          const currentTaskInfo = this.activeTasks.get(taskId);
+          if (currentTaskInfo) {
+            currentTaskInfo.status = "failed";
+            currentTaskInfo.error = error.message;
+            currentTaskInfo.failedAt = new Date().toISOString();
+            currentTaskInfo.progress = 0;
+            this.taskHistory.push(currentTaskInfo);
+            this.activeTasks.delete(taskId);
+          }
+
+          this.onTaskCompleted(taskId);
+        });
+
+      // Return immediately with task info (don't wait for completion)
+      return {
+        success: true,
+        taskId,
+        sessionId,
+        status: "running",
+        message: "Task started successfully and running in background",
+        concurrentExecution: true,
+        runningTasks: this.runningTasks.size,
+        queuedTasks: this.taskQueue.length,
+      };
+    } catch (error) {
+      this.runningTasks.delete(taskId);
+      this.onTaskCompleted(taskId);
+      throw error;
+    }
+  }
+
+  onTaskCompleted(taskId) {
+    // Remove from running tasks
+    this.runningTasks.delete(taskId);
+
+    // Check if there are queued tasks to start
+    if (
+      this.taskQueue.length > 0 &&
+      this.runningTasks.size < this.concurrencyConfig.maxConcurrentTasks
+    ) {
+      const queuedTask = this.taskQueue.shift();
+      this.logger.info(
+        `🚀 Starting queued task ${queuedTask.taskId} (${this.runningTasks.size}/${this.concurrencyConfig.maxConcurrentTasks} slots)`,
+      );
+
+      // Execute the queued task
+      this.executeTaskImmediately(
+        queuedTask.sessionId,
+        queuedTask.task,
+        queuedTask.taskId,
+        queuedTask.options,
+        queuedTask.taskInfo,
+      )
+        .then(queuedTask.resolve)
+        .catch(queuedTask.reject);
+    }
+
+    this.logger.debug(
+      `📊 Concurrency status: ${this.runningTasks.size} running, ${this.taskQueue.length} queued`,
+    );
+  }
+
+  // ============== END CONCURRENT EXECUTION METHODS ==============
 }

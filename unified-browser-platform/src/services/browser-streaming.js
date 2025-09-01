@@ -6,6 +6,7 @@
 import puppeteer from "puppeteer";
 import { EventEmitter } from "events";
 import { Logger } from "../utils/logger.js";
+import OptimizedTabDetection from "./optimized-tab-detection.js";
 
 export class BrowserStreamingService extends EventEmitter {
   constructor() {
@@ -13,6 +14,14 @@ export class BrowserStreamingService extends EventEmitter {
     this.sessions = new Map();
     this.logger = new Logger("BrowserStreamingService");
     this.isInitialized = false;
+
+    // Initialize optimized tab detection
+    this.tabDetection = new OptimizedTabDetection(this.logger);
+
+    // Start periodic cache cleanup
+    setInterval(() => {
+      this.tabDetection.cleanupCache();
+    }, 30000); // Clean every 30 seconds
   }
 
   async initialize() {
@@ -724,7 +733,7 @@ export class BrowserStreamingService extends EventEmitter {
 
       // Clean up tab activity monitor
       if (session.tabActivityMonitor) {
-        clearInterval(session.tabActivityMonitor);
+        clearTimeout(session.tabActivityMonitor);
         session.tabActivityMonitor = null;
       }
 
@@ -1075,41 +1084,19 @@ export class BrowserStreamingService extends EventEmitter {
               // Track user interactions and focus changes on this tab
               newPage.on("domcontentloaded", async () => {
                 try {
-                  // Add comprehensive activity tracking
-                  await newPage.evaluateOnNewDocument(() => {
-                    let activityCount = 0;
-                    const events = [
-                      "click",
-                      "keydown",
-                      "scroll",
-                      "mousemove",
-                      "focus",
-                      "mousedown",
-                    ];
-                    events.forEach((eventType) => {
-                      document.addEventListener(
-                        eventType,
-                        () => {
-                          activityCount++;
-                          window._tabActivity = activityCount;
-                          window._lastActivity = Date.now();
-                        },
-                        { passive: true },
-                      );
-                    });
-
-                    // Track page visibility changes
-                    document.addEventListener("visibilitychange", () => {
-                      if (!document.hidden) {
-                        window._tabActivity = (window._tabActivity || 0) + 10;
-                        window._lastActivity = Date.now();
-                      }
-                    });
-                  });
+                  // Inject automation markers immediately for this page
+                  await this.injectAutomationMarkers(newPage);
                 } catch (error) {
                   // Ignore evaluation errors
                 }
               });
+
+              // Also inject markers immediately for existing pages
+              try {
+                await this.injectAutomationMarkers(newPage);
+              } catch (error) {
+                // Ignore evaluation errors
+              }
 
               // Monitor page focus events
               newPage.on("focus", async () => {
@@ -1216,20 +1203,96 @@ export class BrowserStreamingService extends EventEmitter {
         }
       });
 
-      // Set up bulletproof active tab detection using browser.targets()
-      session.tabActivityMonitor = setInterval(async () => {
+      // Set up optimized active tab detection with adaptive polling
+      const scheduleNextDetection = async () => {
         try {
-          await this.bulletproofTabDetection(sessionId);
+          await this.optimizedBulletproofTabDetection(sessionId);
         } catch (error) {
           // Silently handle tab activity monitor errors
         }
-      }, 500); // Check every 500ms for faster response
+
+        // Schedule next detection with adaptive interval
+        const interval = this.tabDetection.getPollingInterval(sessionId);
+        session.tabActivityMonitor = setTimeout(
+          scheduleNextDetection,
+          interval,
+        );
+      };
+
+      // Start the adaptive polling
+      scheduleNextDetection();
 
       this.logger.info(
         `✅ Tab management initialized for session ${sessionId}`,
       );
     } catch (error) {
       this.logger.error(`Failed to setup tab management: ${error.message}`);
+    }
+  }
+
+  /**
+   * **ENHANCED: Synchronize tab registry with actual browser state**
+   * This ensures that the tab registry matches the actual tabs in the browser
+   */
+  async syncTabRegistry(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.browser) return;
+
+    try {
+      const pages = await session.browser.pages();
+      const currentTabIds = new Set(session.tabs.keys());
+      const actualTabIds = new Set();
+
+      // Add/update tabs that exist in browser
+      for (const page of pages) {
+        try {
+          const targetId = page.target()._targetId;
+          actualTabIds.add(targetId);
+
+          if (!session.tabs.has(targetId)) {
+            const title = await page.title();
+            const url = page.url();
+
+            session.tabs.set(targetId, {
+              page: page,
+              title: title || "New Tab",
+              url: url,
+              isActive: false,
+              createdAt: new Date(),
+              lastActiveAt: new Date(),
+            });
+
+            this.logger.debug(`📑 Auto-registered tab ${targetId}: ${title}`);
+          } else {
+            // Update existing tab info
+            const tabInfo = session.tabs.get(targetId);
+            if (tabInfo) {
+              tabInfo.page = page; // Update page reference
+              try {
+                tabInfo.title = await page.title();
+                tabInfo.url = page.url();
+              } catch (error) {
+                // Page might be closed, keep old info
+              }
+            }
+          }
+        } catch (error) {
+          // Skip problematic pages
+          continue;
+        }
+      }
+
+      // Remove tabs that no longer exist in browser
+      for (const tabId of currentTabIds) {
+        if (!actualTabIds.has(tabId)) {
+          session.tabs.delete(tabId);
+          this.logger.debug(`🗑️ Removed stale tab ${tabId} from registry`);
+        }
+      }
+
+      // this.logger.debug(`🔄 Tab registry synced: ${session.tabs.size} tabs`);
+    } catch (error) {
+      this.logger.error(`Error syncing tab registry: ${error.message}`);
     }
   }
 
@@ -1253,6 +1316,9 @@ export class BrowserStreamingService extends EventEmitter {
     }
 
     try {
+      // **ENHANCED: Sync tab registry first to prevent ID mismatches**
+      await this.syncTabRegistry(sessionId);
+
       // Get ALL targets from browser directly
       const allTargets = await session.browser.targets();
       const pageTargets = allTargets.filter(
@@ -1318,7 +1384,114 @@ export class BrowserStreamingService extends EventEmitter {
           // Priority scoring
           let score = 100; // Base score
 
-          // HIGHEST priority for YouTube and GitHub
+          // **ENHANCED: Detect active browser-use automation first (HIGHEST PRIORITY)**
+          try {
+            const automationActivity = await page.evaluate(() => {
+              // Check for browser-use automation markers
+              const hasAutomationMarker =
+                window.browserUseActive ||
+                window.automationInProgress ||
+                document.querySelector("[data-browser-use]") ||
+                document.querySelector("[automation-target]");
+
+              // Check for recent DOM changes (automation often modifies DOM)
+              const recentDomChanges = window.lastDomModification
+                ? Date.now() - window.lastDomModification < 5000
+                : false;
+
+              // Check for recent click/input events
+              const recentInteraction = window.lastInteractionTime
+                ? Date.now() - window.lastInteractionTime < 10000
+                : false;
+
+              // Check for automation-specific classes or attributes
+              const hasAutomationClasses =
+                document.querySelector(
+                  '.browser-use-target, .automation-highlight, [data-testid], [aria-label*="submit"], [type="submit"]',
+                ) !== null;
+
+              // Check for loading states that indicate form submission or navigation
+              const isProcessing =
+                document.querySelector(
+                  '.loading, .spinner, [data-loading="true"], .btn-loading',
+                ) !== null || document.readyState === "loading";
+
+              // Check for active form interactions
+              const hasActiveForm = document.querySelector("form") !== null;
+              const hasFormInputs =
+                document.querySelector("input, select, textarea") !== null;
+
+              return {
+                hasAutomationMarker,
+                recentDomChanges,
+                recentInteraction,
+                hasAutomationClasses,
+                isProcessing,
+                hasActiveForm,
+                hasFormInputs,
+                lastActivity: window.lastInteractionTime || 0,
+              };
+            });
+
+            // **AUTOMATION ACTIVITY BONUS - This fixes the tab detection issue**
+            if (automationActivity.hasAutomationMarker) score += 5000; // Highest priority for automation markers
+            if (automationActivity.recentDomChanges) score += 4000; // Very recent automation changes
+            if (automationActivity.recentInteraction) score += 3500; // Recent clicks/inputs (this should catch RedBus automation)
+            if (automationActivity.isProcessing) score += 3000; // Active form/navigation processing
+            if (automationActivity.hasAutomationClasses) score += 2500; // Automation CSS markers
+            if (automationActivity.hasActiveForm) score += 2000; // Page has forms (booking sites)
+            if (automationActivity.hasFormInputs) score += 1500; // Page has input fields
+
+            // Time-based activity scoring (most important for detecting active automation)
+            const timeSinceActivity =
+              Date.now() - automationActivity.lastActivity;
+            if (timeSinceActivity < 2000)
+              score += 4500; // Very recent (2 seconds) - likely active automation
+            else if (timeSinceActivity < 5000)
+              score += 3500; // Recent (5 seconds)
+            else if (timeSinceActivity < 15000)
+              score += 2000; // Somewhat recent (15 seconds)
+            else if (timeSinceActivity < 30000) score += 1000; // Still relevant (30 seconds)
+
+            // Log automation detection for debugging (with rate limiting)
+            if (score > 2000) {
+              const logKey = `${targetId}_automation_log`;
+              const lastLog = this.lastAutomationLogs?.get(logKey);
+              const now = Date.now();
+
+              // Only log if it's the first time or been 5 seconds since last log
+              if (!this.lastAutomationLogs) {
+                this.lastAutomationLogs = new Map();
+              }
+
+              if (!lastLog || now - lastLog > 5000) {
+                this.logger.info(
+                  `🤖 AUTOMATION DETECTED in tab: ${title} (${url})`,
+                  {
+                    automationScore: score - 100, // Subtract base score
+                    markers: automationActivity.hasAutomationMarker,
+                    recentChanges: automationActivity.recentDomChanges,
+                    recentInteraction: automationActivity.recentInteraction,
+                    isProcessing: automationActivity.isProcessing,
+                    timeSinceActivity: timeSinceActivity,
+                  },
+                );
+                this.lastAutomationLogs.set(logKey, now);
+              }
+            }
+          } catch (e) {
+            // Ignore evaluation errors but log them for debugging
+            if (
+              e.message.includes("Execution context") ||
+              e.message.includes("Target closed")
+            ) {
+              // Normal browser state errors - ignore silently
+            } else {
+              this.logger.debug(`Tab evaluation error for ${url}:`, e.message);
+            }
+          }
+
+          // HIGHEST priority for YouTube and GitHub (but still lower than automation)
           if (url.includes("youtube.com")) score += 2000;
           if (url.includes("github.com")) score += 2000;
 
@@ -1334,7 +1507,7 @@ export class BrowserStreamingService extends EventEmitter {
           // CRITICAL: Aggressive bonus for specific target URLs mentioned in tasks
           if (this.isTargetUrl(url)) score += 3000; // Highest priority for exact target URLs
 
-          // Bonus for recently navigated pages
+          // Bonus for recently navigated pages (enhanced with automation detection)
           const tabInfo = session.tabs.get(targetId);
           if (tabInfo && tabInfo.lastActiveAt) {
             const timeSinceUpdate = Date.now() - tabInfo.lastActiveAt.getTime();
@@ -1345,7 +1518,7 @@ export class BrowserStreamingService extends EventEmitter {
             else if (timeSinceUpdate < 30000) score += 500; // Moderately recent
           }
 
-          // Force switch for forms and interactive pages
+          // Force switch for forms and interactive pages (booking sites like RedBus)
           if (this.isInteractivePage(url)) score += 1500;
 
           // Debug scoring for important sites
@@ -1403,6 +1576,76 @@ export class BrowserStreamingService extends EventEmitter {
       }
     } catch (error) {
       this.logger.error(`Error in bulletproof tab detection: ${error.message}`);
+    }
+  }
+
+  /**
+   * Optimized bulletproof tab detection with smart caching and adaptive polling
+   */
+  async optimizedBulletproofTabDetection(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.browser) return;
+
+    // Skip automatic switching if manual override is active
+    if (session.manualOverride && Date.now() - session.manualOverride < 3000) {
+      return;
+    } else if (session.manualOverride) {
+      delete session.manualOverride;
+    }
+
+    try {
+      // **ENHANCED: Sync tab registry with browser state first**
+      await this.syncTabRegistry(sessionId);
+
+      // Use optimized detection service
+      const result = await this.tabDetection.optimizedBulletproofDetection(
+        session,
+        sessionId,
+      );
+
+      if (result && result.page) {
+        const targetId = result.page.target()._targetId;
+        const currentUrl = result.page.url();
+
+        // **ENHANCED: Ensure the tab is in the registry before switching**
+        if (!session.tabs.has(targetId)) {
+          try {
+            const title = await result.page.title();
+            session.tabs.set(targetId, {
+              page: result.page,
+              title: title || "New Tab",
+              url: currentUrl,
+              isActive: false,
+              createdAt: new Date(),
+              lastActiveAt: new Date(),
+            });
+            this.logger.debug(`📑 Added tab ${targetId} to registry: ${title}`);
+          } catch (error) {
+            this.logger.warn(
+              `⚠️ Could not add tab ${targetId} to registry: ${error.message}`,
+            );
+            return; // Skip switching if we can't register the tab
+          }
+        }
+
+        // Switch to best tab if different from current
+        if (targetId !== session.activeTabId) {
+          const isHighPriority =
+            result.confidence === "HIGH" || result.score >= 4000;
+
+          if (isHighPriority) {
+            this.logger.info(
+              `🚀 OPTIMIZED SWITCH: ${session.activeTabId} → ${targetId} (${currentUrl}) Score: ${result.score} Method: ${result.method}`,
+            );
+          }
+
+          await this.switchToTab(sessionId, targetId, false);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error in optimized tab detection: ${error.message}`);
+      // Fallback to original method if optimized fails
+      await this.bulletproofTabDetection(sessionId);
     }
   }
 
@@ -1527,9 +1770,22 @@ export class BrowserStreamingService extends EventEmitter {
     }
 
     try {
+      // **NEW: Check for activity lock before switching (unless manual)**
+      if (!isManual && this.tabDetection) {
+        const activityLock = this.tabDetection.hasActivityLock(sessionId);
+        if (activityLock && activityLock.tabId !== targetId) {
+          // this.logger.info(`🔒 Activity lock prevents switch from ${activityLock.tabId.substring(0, 8)}... to ${targetId.substring(0, 8)}... (${activityLock.reason})`);
+          return false;
+        }
+      }
+
       // Set manual override if this is a manual switch
       if (isManual) {
         session.manualOverride = Date.now();
+        // **NEW: Clear any existing activity lock for manual switches**
+        if (this.tabDetection) {
+          this.tabDetection.clearActivityLock(sessionId);
+        }
         // this.logger.info(
         //   `🎛️ [MANUAL SWITCH] User manually switching to tab ${targetId}, setting 3-second override`,
         // );
@@ -1545,7 +1801,32 @@ export class BrowserStreamingService extends EventEmitter {
       //   `🔄 [TAB SWITCH DEBUG] Available tabs: ${Array.from(session.tabs.keys()).join(", ")}`,
       // );
 
-      const tabInfo = session.tabs.get(targetId);
+      // **ENHANCED: Try to add tab to registry if not found**
+      let tabInfo = session.tabs.get(targetId);
+      if (!tabInfo) {
+        try {
+          const targets = await session.browser.targets();
+          const target = targets.find((t) => t._targetId === targetId);
+          if (target && target.type() === "page") {
+            const page = await target.page();
+            tabInfo = {
+              page: page,
+              title: (await page.title()) || "New Tab",
+              url: page.url(),
+              isActive: false,
+              createdAt: new Date(),
+              lastActiveAt: new Date(),
+            };
+            session.tabs.set(targetId, tabInfo);
+            this.logger.info(
+              `📝 Auto-registered missing tab ${targetId}: ${tabInfo.title}`,
+            );
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to auto-register tab: ${error.message}`);
+        }
+      }
+
       if (!tabInfo) {
         this.logger.warn(
           `❌ Tab ${targetId} not found in session ${sessionId}`,
@@ -1560,30 +1841,6 @@ export class BrowserStreamingService extends EventEmitter {
       this.logger.info(
         `🔄 SWITCHING: ${session.activeTabId || "none"} → ${targetId} in session ${sessionId}: ${tabInfo.title}`,
       );
-
-      // If tab not in registry, add it from browser targets
-      if (!session.tabs.has(targetId)) {
-        try {
-          const targets = await session.browser.targets();
-          const target = targets.find((t) => t._targetId === targetId);
-          if (target && target.type() === "page") {
-            const page = await target.page();
-            session.tabs.set(targetId, {
-              page: page,
-              title: (await page.title()) || "New Tab",
-              url: page.url(),
-              isActive: false,
-              createdAt: new Date(),
-              lastActiveAt: new Date(),
-            });
-            this.logger.info(
-              `📝 Added missing tab ${targetId} to registry: ${page.url()}`,
-            );
-          }
-        } catch (error) {
-          this.logger.warn(`Failed to add tab to registry: ${error.message}`);
-        }
-      }
 
       // Mark all tabs as inactive
       session.tabs.forEach((tab) => {
@@ -1619,6 +1876,27 @@ export class BrowserStreamingService extends EventEmitter {
         //   `🔄 [TAB SWITCH DEBUG] Streaming switched successfully`,
         // );
       }
+
+      // **NEW: Set activity lock for automation-heavy tabs**
+      if (this.tabDetection && !isManual) {
+        const url = tabInfo.url;
+        if (url.includes("github.com") && url.includes("/search")) {
+          this.tabDetection.setActivityLock(
+            sessionId,
+            targetId,
+            "github_search_tab",
+          );
+        } else if (isManual) {
+          this.tabDetection.setActivityLock(
+            sessionId,
+            targetId,
+            "manual_switch",
+          );
+        }
+      }
+
+      // **ENHANCED: Inject automation markers immediately**
+      await this.injectAutomationMarkers(tabInfo.page);
 
       // this.logger.info(
       //   `✅ Successfully switched to tab ${targetId}: ${tabInfo.title}`,
@@ -1810,5 +2088,160 @@ export class BrowserStreamingService extends EventEmitter {
     }
 
     return false;
+  }
+
+  /**
+   * Inject automation markers into a page for better tab detection
+   */
+  async injectAutomationMarkers(page) {
+    try {
+      await page.evaluate(() => {
+        let activityCount = 0;
+
+        // **ENHANCED: Set browser-use automation markers for tab detection**
+        window.browserUseActive = true;
+        window.automationInProgress = true;
+        window.lastInteractionTime = Date.now();
+        window.lastDomModification = Date.now();
+        window.searchActivity = false;
+        window.formActivity = false;
+
+        // Only set up event listeners if not already done
+        if (!window.browserUseMarkersInjected) {
+          window.browserUseMarkersInjected = true;
+
+          const events = [
+            "click",
+            "keydown",
+            "scroll",
+            "mousemove",
+            "focus",
+            "mousedown",
+            "input",
+            "change",
+            "submit",
+          ];
+
+          events.forEach((eventType) => {
+            document.addEventListener(
+              eventType,
+              (event) => {
+                activityCount++;
+                window._tabActivity = activityCount;
+                window._lastActivity = Date.now();
+
+                // **ENHANCED: Update automation markers on any interaction**
+                window.lastInteractionTime = Date.now();
+                window.automationInProgress = true;
+
+                // **ENHANCED: Track specific activity types**
+                if (["input", "change"].includes(eventType)) {
+                  window.formActivity = true;
+                  window.lastDomModification = Date.now();
+
+                  // Check if this is search-related
+                  const target = event.target;
+                  if (
+                    target &&
+                    (target.name?.includes("search") ||
+                      target.id?.includes("search") ||
+                      target.placeholder?.toLowerCase().includes("search") ||
+                      target.className?.includes("search"))
+                  ) {
+                    window.searchActivity = true;
+                    window.lastSearchTime = Date.now();
+                  }
+                }
+
+                // Mark automation activity for form interactions (like RedBus booking)
+                if (
+                  ["click", "input", "change", "submit"].includes(eventType)
+                ) {
+                  window.lastDomModification = Date.now();
+
+                  // Add automation markers to the target element
+                  if (event.target) {
+                    event.target.setAttribute("data-browser-use", "active");
+                    event.target.classList.add("browser-use-target");
+                  }
+                }
+              },
+              { passive: true },
+            );
+          });
+
+          // **ENHANCED: Monitor DOM changes for automation detection**
+          const observer = new MutationObserver((mutations) => {
+            if (mutations.length > 0) {
+              window.lastDomModification = Date.now();
+              window.automationInProgress = true;
+
+              // Check for search results or navigation changes
+              const hasSearchResults = document.querySelector(
+                '[data-testid*="search"], .search-results, #search-results',
+              );
+              if (hasSearchResults) {
+                window.searchActivity = true;
+                window.lastSearchTime = Date.now();
+              }
+            }
+          });
+
+          if (document.body) {
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ["value", "checked", "selected"],
+            });
+          }
+
+          // Track page visibility changes
+          document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+              window._tabActivity = (window._tabActivity || 0) + 10;
+              window._lastActivity = Date.now();
+              window.lastInteractionTime = Date.now();
+            }
+          });
+
+          // **ENHANCED: Keep automation markers fresh with better logic**
+          setInterval(() => {
+            // Mark this tab as having browser-use automation
+            window.browserUseActive = true;
+
+            // If no recent activity, reduce automation signals
+            const timeSinceLastActivity =
+              Date.now() - (window.lastInteractionTime || 0);
+            if (timeSinceLastActivity > 10000) {
+              // Reduced from 30 seconds to 10
+              window.automationInProgress = false;
+              window.formActivity = false;
+            }
+
+            // Reset search activity after 5 seconds
+            const timeSinceSearch = Date.now() - (window.lastSearchTime || 0);
+            if (timeSinceSearch > 5000) {
+              window.searchActivity = false;
+            }
+          }, 1000);
+        }
+      });
+
+      // Also set up for future navigations
+      await page.evaluateOnNewDocument(() => {
+        // This will run on every new document load
+        setTimeout(() => {
+          if (!window.browserUseMarkersInjected) {
+            window.browserUseActive = true;
+            window.automationInProgress = true;
+            window.lastInteractionTime = Date.now();
+            window.lastDomModification = Date.now();
+          }
+        }, 100);
+      });
+    } catch (error) {
+      // Ignore injection errors (page might be closed, etc.)
+    }
   }
 }

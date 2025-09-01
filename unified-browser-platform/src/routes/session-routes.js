@@ -115,11 +115,10 @@ export function createSessionRoutes(sessionManager, logger) {
   // Clean up expired sessions
   router.post("/cleanup", async (req, res) => {
     try {
-      const cleaned = await sessionManager.cleanupExpiredSessions();
+      sessionManager.cleanupInactiveSessions();
       res.json({
         success: true,
         message: "Cleanup completed",
-        cleanedCount: cleaned,
       });
     } catch (error) {
       logger.error("Failed to cleanup sessions:", error);
