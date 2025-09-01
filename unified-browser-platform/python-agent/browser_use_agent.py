@@ -46,9 +46,10 @@ class UnifiedBrowserUseAgent:
     - Multi-modal capabilities (vision, text, etc.)
     """
     
-    def __init__(self, defer_llm: bool = False):
+    def __init__(self, defer_llm: bool = False, disable_highlighting: bool = False):
         self.load_environment()
         self.llm = None
+        self.disable_highlighting = disable_highlighting
         if not defer_llm:
             self.setup_llm()
         self.browser_session = None
@@ -160,6 +161,22 @@ class UnifiedBrowserUseAgent:
                 save_conversation_path=None,  # Can be configured for logging
                 calculate_cost=True,  # Enable token cost tracking
             )
+            
+            # If highlighting is disabled, monkey-patch the highlighting injection function
+            if self.disable_highlighting:
+                print("🚫 Disabling visual highlighting for cleaner streaming...")
+                
+                # Monkey-patch the inject_highlighting_script function to do nothing
+                async def disabled_inject_highlighting_script(*args, **kwargs):
+                    pass  # Do nothing - no highlighting
+                
+                # Import and patch the highlights module
+                try:
+                    import browser_use.dom.debug.highlights as highlights_module
+                    highlights_module.inject_highlighting_script = disabled_inject_highlighting_script
+                    print("✅ Visual highlighting disabled successfully")
+                except ImportError:
+                    print("⚠️ Could not import highlights module - highlighting may still appear")
             
             # Initialize token cost service to enable cost tracking
             if self.agent.token_cost_service:
@@ -451,13 +468,19 @@ async def main():
     
     sanitized_args = [_sanitize_token(a) for a in raw_args]
     
-    # Detect and strip --api even if it's embedded inside the quoted task or tokens
+    # Detect and strip --api and --disable-highlighting flags even if they're embedded inside the quoted task or tokens
     use_api = False
+    disable_highlighting = False
     cleaned_args = []
     for token in sanitized_args:
         if "--api" in token:
             use_api = True
             token = token.replace("--api", "").strip()
+            if not token:
+                continue
+        if "--disable-highlighting" in token:
+            disable_highlighting = True
+            token = token.replace("--disable-highlighting", "").strip()
             if not token:
                 continue
         cleaned_args.append(token)
@@ -475,14 +498,17 @@ async def main():
     
     task = args[0]
     max_steps = int(args[1]) if len(args) > 1 else 10
-    browser_context_id = args[2] if len(args) > 2 else None
+    session_id = args[2] if len(args) > 2 else None  # Session ID from Node.js service
+    browser_context_id = args[3] if len(args) > 3 else None  # CDP endpoint
     
     # TESTING: Print parsed arguments
     print(f"📋 [TESTING] Parsed arguments:")
     print(f"  Task: {task}")
     print(f"  Max steps: {max_steps}")
+    print(f"  Session ID: {session_id}")
     print(f"  Browser context ID: {browser_context_id}")
     print(f"  Use API: {use_api}")
+    print(f"  Disable highlighting: {disable_highlighting}")
     
     # If --api flag is present, use API execution instead of local agent
     if use_api:
@@ -490,7 +516,7 @@ async def main():
         print("🔗 Creating session and executing task via API...")
         
         # Defer LLM setup in API mode; the Node service owns execution
-        agent = UnifiedBrowserUseAgent(defer_llm=True)
+        agent = UnifiedBrowserUseAgent(defer_llm=True, disable_highlighting=disable_highlighting)
         
         try:
             # Create session via API
@@ -543,22 +569,25 @@ async def main():
             return
     
     # Generate streaming URLs for monitoring
-    if browser_context_id and browser_context_id.startswith('ws://'):
-        # Extract session ID from CDP endpoint or use a placeholder
-        session_id = "session_" + str(hash(browser_context_id))[-8:] if browser_context_id else "unknown"
-        streaming_url = f"http://localhost:3000/stream/{session_id}?sessionId={session_id}"
+    if session_id:
+        # Use the session ID provided by Node.js service
         streaming_url = f"http://localhost:3000/stream/{session_id}?sessionId={session_id}"
         print(f"📺 [TESTING] Streaming URL: {streaming_url}")
         print(f"🔗 [TESTING] Live URL: http://localhost:3000/api/live/{session_id}")
-        print(f"🔗 [TESTING] Live URL: http://localhost:3000/api/live/{session_id}")
+    elif browser_context_id and browser_context_id.startswith('ws://'):
+        # Fallback: Extract session ID from CDP endpoint (for backward compatibility)
+        fallback_session_id = "session_" + str(hash(browser_context_id))[-8:] if browser_context_id else "unknown"
+        streaming_url = f"http://localhost:3000/stream/{fallback_session_id}?sessionId={fallback_session_id}"
+        print(f"📺 [TESTING] Fallback streaming URL: {streaming_url}")
+        print(f"🔗 [TESTING] Fallback live URL: http://localhost:3000/api/live/{fallback_session_id}")
     else:
         print("📺 [TESTING] No streaming session - using local browser")
-        print("📺 [TESTING] To test with streaming, use a real WebSocket CDP URL")
+        print("📺 [TESTING] To test with streaming, provide session ID or CDP URL")
         print("📺 [TESTING] Example: ws://127.0.0.1:9222/devtools/browser/...")
     
     # Create and execute with full browser-use agent
     print("🤖 [TESTING] Creating UnifiedBrowserUseAgent...")
-    agent = UnifiedBrowserUseAgent()
+    agent = UnifiedBrowserUseAgent(disable_highlighting=disable_highlighting)
     
     try:
         print("🎯 [TESTING] Starting task execution...")

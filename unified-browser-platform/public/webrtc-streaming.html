@@ -64,39 +64,40 @@
       .streaming-container {
         width: 100vw;
         height: 100vh;
-        display: block;
+        display: flex;
+        justify-content: center;
+        align-items: center;
         background: #000;
         overflow: hidden;
         position: relative;
         margin: 0;
         padding: 0;
+        box-sizing: border-box;
       }
 
       .browser-screen {
-        width: 100vw;
-        height: 100vh;
-        display: block;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
         background: #000;
-        position: absolute;
-        top: 0;
-        left: 0;
-        margin: 0;
-        padding: 0;
+        position: relative;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        overflow: hidden;
       }
 
       #browserCanvas {
-        width: 100vw !important;
-        height: 100vh !important;
-        object-fit: cover;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
         border: none;
         cursor: pointer;
         display: block;
-        position: absolute;
-        top: 0;
-        left: 0;
         background: #000;
-        margin: 0;
-        padding: 0;
+        border-radius: 0;
       }
 
       .placeholder {
@@ -136,7 +137,7 @@
   <body>
     <div class="streaming-container">
       <div class="browser-screen">
-        <canvas id="browserCanvas" width="1920" height="1680"></canvas>
+        <canvas id="browserCanvas"></canvas>
         <div class="placeholder" id="placeholder">
           <h3>🌐 Connecting to Browser Stream</h3>
           <p>Loading...</p>
@@ -191,7 +192,7 @@
         </div>
 
         <!-- Interaction Status Indicator -->
-        <div
+        <!-- <div
           id="interactionStatus"
           style="
             display: none;
@@ -207,7 +208,7 @@
           "
         >
           ✅ Interactions Ready
-        </div>
+        </div> -->
 
         <!-- Security Blocked Indicator -->
         <div
@@ -289,30 +290,19 @@
           }, 1000);
         }
 
-        // High-quality canvas setup
+        // High-quality canvas setup with proper aspect ratio handling
         setupCanvas() {
           // Enable high-quality rendering
           this.ctx.imageSmoothingEnabled = true;
           this.ctx.imageSmoothingQuality = "high";
 
-          // Set canvas to full screen with proper dimensions
-          const updateCanvasSize = () => {
-            this.canvas.width = window.innerWidth;
-            this.canvas.height = window.innerHeight;
-            this.canvas.style.width = "100vw";
-            this.canvas.style.height = "100vh";
-
-            // Log canvas dimensions for debugging
-            console.log(
-              `🔧 Canvas resized to: ${this.canvas.width}x${this.canvas.height}`,
-            );
-          };
-
-          // Initial setup
-          updateCanvasSize();
+          // Set initial canvas size - will be updated when first frame arrives
+          this.canvas.width = 1920;
+          this.canvas.height = 1080;
 
           this.img = new Image();
           this.img.onload = () => {
+            this.updateCanvasDimensions();
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             this.ctx.drawImage(
               this.img,
@@ -330,8 +320,52 @@
           let resizeTimeout = null;
           window.addEventListener("resize", () => {
             if (resizeTimeout) clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(updateCanvasSize, 100);
+            resizeTimeout = setTimeout(
+              () => this.updateCanvasDimensions(),
+              100,
+            );
           });
+        }
+
+        // Update canvas dimensions to maintain aspect ratio for iframe embedding
+        updateCanvasDimensions() {
+          if (!this.img.naturalWidth || !this.img.naturalHeight) return;
+
+          const container = this.canvas.parentElement;
+          const containerRect = container.getBoundingClientRect();
+
+          // Use full container space for iframe embedding
+          const maxWidth = containerRect.width;
+          const maxHeight = containerRect.height;
+
+          // Calculate aspect ratio of the source image
+          const sourceAspectRatio =
+            this.img.naturalWidth / this.img.naturalHeight;
+          const containerAspectRatio = maxWidth / maxHeight;
+
+          let displayWidth, displayHeight;
+
+          if (sourceAspectRatio > containerAspectRatio) {
+            // Image is wider than container - fit to width
+            displayWidth = maxWidth;
+            displayHeight = maxWidth / sourceAspectRatio;
+          } else {
+            // Image is taller than container - fit to height
+            displayHeight = maxHeight;
+            displayWidth = maxHeight * sourceAspectRatio;
+          }
+
+          // Set canvas display size to fill container
+          this.canvas.style.width = `${displayWidth}px`;
+          this.canvas.style.height = `${displayHeight}px`;
+
+          // Set internal canvas resolution to match source image for crisp quality
+          this.canvas.width = this.img.naturalWidth;
+          this.canvas.height = this.img.naturalHeight;
+
+          console.log(
+            `📐 Canvas updated for iframe - Display: ${displayWidth.toFixed(1)}x${displayHeight.toFixed(1)}, Internal: ${this.canvas.width}x${this.canvas.height}, Source: ${this.img.naturalWidth}x${this.img.naturalHeight}`,
+          );
         }
 
         // Full mouse interaction system
@@ -474,7 +508,7 @@
           });
         }
 
-        // Precise coordinate scaling
+        // Precise coordinate scaling with aspect ratio consideration
         getScaledCoordinates(e) {
           const rect = this.canvas.getBoundingClientRect();
 
@@ -482,7 +516,7 @@
           const rawClickX = e.clientX - rect.left;
           const rawClickY = e.clientY - rect.top;
 
-          // Use actual canvas dimensions for accurate mapping
+          // Use actual canvas internal dimensions for accurate mapping
           const canvasWidth = this.canvas.width;
           const canvasHeight = this.canvas.height;
 
@@ -494,10 +528,12 @@
           const clampedX = Math.max(0, Math.min(canvasWidth - 1, x));
           const clampedY = Math.max(0, Math.min(canvasHeight - 1, y));
 
-          // Debug coordinate transformation
-          console.log(
-            `🎯 Raw: (${rawClickX.toFixed(1)}, ${rawClickY.toFixed(1)}) → Canvas: (${clampedX.toFixed(1)}, ${clampedY.toFixed(1)}) | Canvas: ${canvasWidth}x${canvasHeight} | Display: ${rect.width.toFixed(1)}x${rect.height.toFixed(1)}`,
-          );
+          // Debug coordinate transformation (reduced logging)
+          if (e.type === "click" || e.type === "mousedown") {
+            console.log(
+              `🎯 Click: Display(${rawClickX.toFixed(1)}, ${rawClickY.toFixed(1)}) → Canvas(${clampedX.toFixed(1)}, ${clampedY.toFixed(1)}) | Canvas: ${canvasWidth}x${canvasHeight} | Display: ${rect.width.toFixed(1)}x${rect.height.toFixed(1)}`,
+            );
+          }
 
           return {
             x: clampedX,
@@ -984,13 +1020,29 @@
         }
 
         switchToTab(tabId) {
-          if (!this.socket || !this.currentSession) return;
+          if (!this.socket || !this.currentSession) {
+            console.error(
+              "❌ [TAB SWITCH] Cannot switch tab - no socket or session",
+            );
+            console.log("Socket connected:", this.socket?.connected);
+            console.log("Current session:", this.currentSession);
+            return;
+          }
 
-          console.log(`🔄 Switching to tab: ${tabId}`);
+          console.log(`🔄 [TAB SWITCH] Switching to tab: ${tabId}`);
+          console.log(`🔄 [TAB SWITCH] Session ID: ${this.currentSession}`);
+          console.log(
+            `🔄 [TAB SWITCH] Socket connected: ${this.socket.connected}`,
+          );
+
           this.socket.emit("switch-to-tab", {
             sessionId: this.currentSession,
             tabId: tabId,
           });
+
+          console.log(
+            `📤 [TAB SWITCH] Sent switch-to-tab event for tab ${tabId}`,
+          );
         }
 
         updateTabsUI() {
@@ -1029,8 +1081,23 @@
             `;
 
             tabElement.addEventListener("click", () => {
+              console.log(
+                `🖱️ [TAB CLICK] Tab clicked: ${tab.id}, isActive: ${tab.isActive}`,
+              );
+              console.log(`🖱️ [TAB CLICK] Tab title: ${tab.title}`);
+              console.log(
+                `🖱️ [TAB CLICK] Current session: ${this.currentSession}`,
+              );
+
               if (!tab.isActive) {
+                console.log(
+                  `📤 [TAB CLICK] Initiating switch to tab: ${tab.id}`,
+                );
                 this.switchToTab(tab.id);
+              } else {
+                console.log(
+                  `⏭️ [TAB CLICK] Tab is already active, skipping switch`,
+                );
               }
             });
 

@@ -26,14 +26,6 @@ export function createBrowserUseRoutes(
     throw new Error("BrowserUseService is required for browser-use routes");
   }
 
-  console.log("🔧 Browser-use routes initialized with:", {
-    hasSessionManager: !!sessionManager,
-    hasBrowserService: !!browserService,
-    hasBrowserUseService: !!browserUseService,
-    hasLogger: !!logger,
-    hasIO: !!io,
-  });
-
   // Execute task with full browser-use capabilities - returns streaming URLs immediately
   router.post("/execute", async (req, res) => {
     try {
@@ -61,12 +53,6 @@ export function createBrowserUseRoutes(
       // Double-check that createSession method exists
       if (typeof sessionManager.createSession !== "function") {
         console.error("❌ sessionManager.createSession is not a function!");
-        console.error("🔍 sessionManager type:", typeof sessionManager);
-        console.error(
-          "🔍 sessionManager methods:",
-          Object.getOwnPropertyNames(Object.getPrototypeOf(sessionManager)),
-        );
-        console.error("🔍 sessionManager instance:", sessionManager);
         return res.status(500).json({
           error: "Session Manager service not properly initialized",
           type: "service-error",
@@ -85,14 +71,8 @@ export function createBrowserUseRoutes(
         });
 
         console.log(`✅ Session created successfully: ${session.id}`);
-        console.log(
-          `📋 Session details: ID: ${session.id}, Status: ${session.status}, Created: ${session.createdAt}`,
-        );
 
         // Now create the browser session and bind it to the session manager session
-        console.log(
-          `🔗 Creating browser session for session ID: ${session.id}`,
-        );
         const browserSession =
           await browserService.createSessionWithSeparateBrowser(session.id, {
             headless: false, // Make it visible for streaming
@@ -105,13 +85,6 @@ export function createBrowserUseRoutes(
         // Link the browser session to the session manager session
         session.browser = browserSession;
         session.status = "running";
-
-        console.log(
-          `🔗 Browser session bound to session manager: ${session.id}`,
-        );
-        console.log(
-          `📋 Final session state: ${session.id} - status: ${session.status}`,
-        );
       } catch (sessionError) {
         console.error(`❌ Failed to create session:`, sessionError);
         return res.status(500).json({

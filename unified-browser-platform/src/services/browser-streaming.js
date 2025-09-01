@@ -39,7 +39,7 @@ export class BrowserStreamingService extends EventEmitter {
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
-          height: options.height || 1080,
+          height: options.height || 1200, // Increased from 1080 to 1200 for better content viewing
           deviceScaleFactor: 1,
         },
         args: [
@@ -54,7 +54,7 @@ export class BrowserStreamingService extends EventEmitter {
           // "--headless=new", // Removed for CDP screencast to work
           "--hide-scrollbars",
           "--mute-audio",
-          `--window-size=${options.width || 1920},${options.height || 1080}`,
+          `--window-size=${options.width || 1920},${options.height || 1200}`,
           "--window-position=0,0",
           "--force-device-scale-factor=1",
           "--disable-background-timer-throttling",
@@ -170,7 +170,7 @@ export class BrowserStreamingService extends EventEmitter {
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
-          height: options.height || 1080,
+          height: options.height || 1200, // Increased for better content viewing
           deviceScaleFactor: 1,
         },
         args: [
@@ -203,7 +203,7 @@ export class BrowserStreamingService extends EventEmitter {
           "--disable-popup-blocking",
           "--hide-scrollbars",
           "--mute-audio",
-          `--window-size=${options.width || 1920},${options.height || 1080}`,
+          `--window-size=${options.width || 1920},${options.height || 1200}`,
           "--window-position=0,0",
           "--force-device-scale-factor=1",
           "--disable-blink-features=AutomationControlled",
@@ -293,17 +293,17 @@ export class BrowserStreamingService extends EventEmitter {
       session.streamCallback = callback;
       session.streaming = true;
 
-      // Start screencast
+      // Start screencast with higher quality settings
       this.logger.debug(
         `🎬 Sending Page.startScreencast for session ${sessionId}`,
       );
       try {
         const result = await session.client.send("Page.startScreencast", {
           format: "jpeg",
-          quality: 80,
-          maxWidth: session.viewport.width,
-          maxHeight: session.viewport.height,
-          everyNthFrame: 1,
+          quality: 95, // Increased from 80 to 95 for higher quality
+          maxWidth: Math.max(session.viewport.width, 1920), // Ensure minimum resolution
+          maxHeight: Math.max(session.viewport.height, 1080),
+          everyNthFrame: 1, // Capture every frame for smooth streaming
         });
         this.logger.debug(
           `✅ Page.startScreencast sent successfully for session ${sessionId}, result:`,
@@ -694,7 +694,7 @@ export class BrowserStreamingService extends EventEmitter {
       const screenshot = await session.page.screenshot({
         type: "png",
         fullPage: options.fullPage || false,
-        quality: options.quality || 80,
+        quality: options.quality || 95, // Increased default quality from 80 to 95
         ...options,
       });
 
@@ -825,7 +825,7 @@ export class BrowserStreamingService extends EventEmitter {
         // Convert binary frame data to base64 for the client
         const base64Frame = frame.toString("base64");
         // Send frame to connected clients via Socket.IO
-        this.logger.debug(`📹 Sending frame to client: ${frame.length} bytes`);
+        // this.logger.debug(`📹 Sending frame to client: ${frame.length} bytes`);
         io.to(sessionId).emit("video-frame", base64Frame);
       };
 
@@ -1160,8 +1160,17 @@ export class BrowserStreamingService extends EventEmitter {
                 // Update the last active timestamp immediately
                 tabInfo.lastActiveAt = new Date();
 
+                // Check if this is a high-priority navigation
+                const isHighPriority =
+                  tabInfo.url.includes("docs.google.com") ||
+                  tabInfo.url.includes("forms.gle") ||
+                  tabInfo.url.includes("youtube.com") ||
+                  tabInfo.url.includes("github.com") ||
+                  (tabInfo.url.includes("google.com") &&
+                    tabInfo.url.includes("form"));
+
                 this.logger.info(
-                  `🔍 Tab ${targetId} navigated: ${oldUrl} → ${tabInfo.url} - IMMEDIATE SWITCH`,
+                  `🔍 Tab ${targetId} navigated: ${oldUrl} → ${tabInfo.url} - IMMEDIATE SWITCH${isHighPriority ? " (HIGH PRIORITY)" : ""}`,
                 );
 
                 // Immediately switch to this tab as it's clearly being used
@@ -1212,7 +1221,7 @@ export class BrowserStreamingService extends EventEmitter {
         try {
           await this.bulletproofTabDetection(sessionId);
         } catch (error) {
-          this.logger.error(`Error in tab activity monitor: ${error.message}`);
+          // Silently handle tab activity monitor errors
         }
       }, 500); // Check every 500ms for faster response
 
@@ -1230,6 +1239,18 @@ export class BrowserStreamingService extends EventEmitter {
   async bulletproofTabDetection(sessionId) {
     const session = this.sessions.get(sessionId);
     if (!session || !session.browser) return;
+
+    // Skip automatic switching if manual override is active
+    if (session.manualOverride && Date.now() - session.manualOverride < 3000) {
+      const remainingTime = 3000 - (Date.now() - session.manualOverride);
+      // this.logger.debug(
+      //   `🎛️ Manual override active (${remainingTime}ms remaining), skipping automatic tab switching for session ${sessionId}`,
+      // );
+      return;
+    } else if (session.manualOverride) {
+      // Manual override expired - clear it
+      delete session.manualOverride;
+    }
 
     try {
       // Get ALL targets from browser directly
@@ -1273,9 +1294,15 @@ export class BrowserStreamingService extends EventEmitter {
           } else {
             // Update existing tab info
             const tabInfo = session.tabs.get(targetId);
+            const urlChanged = tabInfo.url !== url;
             tabInfo.title = title;
             tabInfo.url = url;
             tabInfo.page = page;
+
+            // If URL changed, update the last active time (this tab is being used)
+            if (urlChanged && url !== "about:blank") {
+              tabInfo.lastActiveAt = new Date();
+            }
           }
 
           // Skip empty/system pages for scoring
@@ -1294,15 +1321,47 @@ export class BrowserStreamingService extends EventEmitter {
           // HIGHEST priority for YouTube and GitHub
           if (url.includes("youtube.com")) score += 2000;
           if (url.includes("github.com")) score += 2000;
+
+          // HIGH priority for Google services
+          if (url.includes("docs.google.com")) score += 1800; // Google Docs/Forms/Sheets
+          if (url.includes("forms.gle") || url.includes("form")) score += 1800; // Google Forms short URLs
           if (url.includes("google.com") && url.includes("search"))
             score += 800;
 
           // Bonus for search results pages
           if (url.includes("/results") || url.includes("/search")) score += 500;
 
-          this.logger.debug(
-            `🎯 Target scan: ${title} (${url}) - Score: ${score}`,
-          );
+          // CRITICAL: Aggressive bonus for specific target URLs mentioned in tasks
+          if (this.isTargetUrl(url)) score += 3000; // Highest priority for exact target URLs
+
+          // Bonus for recently navigated pages
+          const tabInfo = session.tabs.get(targetId);
+          if (tabInfo && tabInfo.lastActiveAt) {
+            const timeSinceUpdate = Date.now() - tabInfo.lastActiveAt.getTime();
+            if (timeSinceUpdate < 5000)
+              score += 2000; // Very recent activity (within 5 seconds)
+            else if (timeSinceUpdate < 15000)
+              score += 1000; // Recent activity
+            else if (timeSinceUpdate < 30000) score += 500; // Moderately recent
+          }
+
+          // Force switch for forms and interactive pages
+          if (this.isInteractivePage(url)) score += 1500;
+
+          // Debug scoring for important sites
+          if (
+            url.includes("docs.google.com") ||
+            url.includes("forms.gle") ||
+            url.includes("form")
+          ) {
+            this.logger.info(
+              `🎯 GOOGLE FORMS detected: ${title} (${url}) - Score: ${score}`,
+            );
+          }
+
+          // this.logger.debug(
+          //   `🎯 Target scan: ${title} (${url}) - Score: ${score}`,
+          // );
 
           if (score > bestScore) {
             bestScore = score;
@@ -1329,10 +1388,17 @@ export class BrowserStreamingService extends EventEmitter {
         const targetId = bestTarget._targetId;
 
         if (targetId !== session.activeTabId) {
-          this.logger.info(
-            `🚀 BULLETPROOF SWITCH: ${session.activeTabId} → ${targetId} (${bestUrl}) Score: ${bestScore}`,
-          );
-          await this.switchToTab(sessionId, targetId);
+          // Check if this is a high-priority navigation that should switch immediately
+          const isHighPriority = bestScore >= 1800; // Google Docs/Forms, YouTube, GitHub
+          const shouldForceSwitch = isHighPriority && bestScore > 1000;
+
+          if (shouldForceSwitch) {
+            this.logger.info(
+              `🚀 HIGH PRIORITY SWITCH: ${session.activeTabId} → ${targetId} (${bestUrl}) Score: ${bestScore}`,
+            );
+          }
+
+          await this.switchToTab(sessionId, targetId, false); // isManual = false for automatic switches
         }
       }
     } catch (error) {
@@ -1389,6 +1455,8 @@ export class BrowserStreamingService extends EventEmitter {
           // High priority for target sites
           if (url.includes("youtube.com")) score += 1000;
           if (url.includes("github.com")) score += 1000;
+          if (url.includes("docs.google.com")) score += 900; // Google Docs/Forms/Sheets
+          if (url.includes("forms.gle") || url.includes("form")) score += 900; // Google Forms
           if (url.includes("google.com") && url.includes("search"))
             score += 500;
 
@@ -1449,14 +1517,42 @@ export class BrowserStreamingService extends EventEmitter {
   /**
    * Switch streaming to a specific tab
    */
-  async switchToTab(sessionId, targetId) {
+  async switchToTab(sessionId, targetId, isManual = false) {
     const session = this.sessions.get(sessionId);
-    if (!session) return false;
+    if (!session) {
+      this.logger.error(
+        `❌ SWITCH TO TAB FAILED: Session ${sessionId} not found`,
+      );
+      return false;
+    }
 
     try {
+      // Set manual override if this is a manual switch
+      if (isManual) {
+        session.manualOverride = Date.now();
+        // this.logger.info(
+        //   `🎛️ [MANUAL SWITCH] User manually switching to tab ${targetId}, setting 3-second override`,
+        // );
+      }
+
+      // this.logger.info(
+      //   `🔄 [TAB SWITCH DEBUG] Starting tab switch to ${targetId} in session ${sessionId}`,
+      // );
+      // this.logger.info(
+      //   `🔄 [TAB SWITCH DEBUG] Current active tab: ${session.activeTabId}`,
+      // );
+      // this.logger.info(
+      //   `🔄 [TAB SWITCH DEBUG] Available tabs: ${Array.from(session.tabs.keys()).join(", ")}`,
+      // );
+
       const tabInfo = session.tabs.get(targetId);
       if (!tabInfo) {
-        this.logger.warn(`Tab ${targetId} not found in session ${sessionId}`);
+        this.logger.warn(
+          `❌ Tab ${targetId} not found in session ${sessionId}`,
+        );
+        this.logger.warn(
+          `Available tab IDs: ${Array.from(session.tabs.keys()).join(", ")}`,
+        );
         return false;
       }
 
@@ -1502,17 +1598,31 @@ export class BrowserStreamingService extends EventEmitter {
       // Switch the primary page reference
       session.page = tabInfo.page;
 
+      // this.logger.info(
+      //   `🔄 [TAB SWITCH DEBUG] About to bring tab ${targetId} to front`,
+      // );
+
       // Bring the tab to front
       await tabInfo.page.bringToFront();
 
+      // this.logger.info(
+      //   `🔄 [TAB SWITCH DEBUG] Tab brought to front successfully`,
+      // );
+
       // If streaming is active, we need to restart the CDP client for the new page
       if (session.streaming) {
+        // this.logger.info(
+        //   `🔄 [TAB SWITCH DEBUG] Switching streaming to new tab`,
+        // );
         await this.switchStreamingToTab(sessionId, targetId);
+        // this.logger.info(
+        //   `🔄 [TAB SWITCH DEBUG] Streaming switched successfully`,
+        // );
       }
 
-      this.logger.info(
-        `✅ Successfully switched to tab ${targetId}: ${tabInfo.title}`,
-      );
+      // this.logger.info(
+      //   `✅ Successfully switched to tab ${targetId}: ${tabInfo.title}`,
+      // );
 
       // Emit tab switch event to connected clients
       this.emit("tabSwitched", {
@@ -1599,7 +1709,7 @@ export class BrowserStreamingService extends EventEmitter {
           }
         });
 
-        this.logger.info(`✅ Streaming switched to tab ${targetId}`);
+        // this.logger.info(`✅ Streaming switched to tab ${targetId}`);
       }
     } catch (error) {
       this.logger.error(
@@ -1640,5 +1750,65 @@ export class BrowserStreamingService extends EventEmitter {
       url: activeTab.url,
       isActive: true,
     };
+  }
+
+  /**
+   * Check if tab URL matches target URL from task
+   */
+  isTargetUrl(tabUrl, targetUrl) {
+    if (!tabUrl || !targetUrl) return false;
+
+    // Exact match
+    if (tabUrl === targetUrl) return true;
+
+    // Clean URLs for comparison (remove trailing slashes, hash fragments)
+    const cleanTabUrl = tabUrl.split("#")[0].replace(/\/$/, "");
+    const cleanTargetUrl = targetUrl.split("#")[0].replace(/\/$/, "");
+
+    if (cleanTabUrl === cleanTargetUrl) return true;
+
+    // Check if target URL is a substring (for form URLs with parameters)
+    if (
+      cleanTabUrl.includes(cleanTargetUrl) ||
+      cleanTargetUrl.includes(cleanTabUrl)
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if tab is an interactive page (forms, login, etc.)
+   */
+  isInteractivePage(tabUrl, tabTitle = "") {
+    if (!tabUrl) return false;
+
+    const url = tabUrl.toLowerCase();
+    const title = tabTitle.toLowerCase();
+
+    // Google Forms and similar interactive content
+    const interactivePatterns = [
+      "docs.google.com/forms",
+      "forms.google.com",
+      "forms.gle",
+      "login",
+      "signin",
+      "signup",
+      "register",
+      "checkout",
+      "payment",
+      "form",
+      "survey",
+      "questionnaire",
+    ];
+
+    for (const pattern of interactivePatterns) {
+      if (url.includes(pattern) || title.includes(pattern)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

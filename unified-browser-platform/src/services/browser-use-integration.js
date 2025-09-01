@@ -217,6 +217,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
       priority = "normal",
       llmProvider = "azure",
       useExistingBrowser = true, // New option to use existing streaming browser
+      disableHighlighting = true, // NEW: Disable orange automation indicators
     } = options;
 
     this.logger.info(
@@ -228,6 +229,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         priority,
         llmProvider,
         useExistingBrowser,
+        disableHighlighting, // NEW: Log highlighting setting
       },
     );
 
@@ -276,7 +278,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const executionId = `browseruse_${sessionId}_${Date.now()}`;
-      const args = [this.agentScriptPath, task, maxSteps.toString()];
+      const args = [this.agentScriptPath, task, maxSteps.toString(), sessionId]; // Pass sessionId as 4th argument
 
       // Add browser context if provided or if using existing browser
       let cdpEndpoint = browserContextId || options.cdpEndpoint;
@@ -319,6 +321,12 @@ export class BrowserUseIntegrationService extends EventEmitter {
           `⚠️ useExistingBrowser is true but no CDP endpoint found. options.cdpEndpoint: ${options.cdpEndpoint}`,
         );
         // Don't fail here, let the Python agent handle it gracefully
+      }
+
+      // Add disable highlighting flag if specified
+      if (disableHighlighting) {
+        args.push("--disable-highlighting");
+        this.logger.info("🚫 Visual highlighting disabled");
       }
 
       // Comprehensive environment setup for browser-use
