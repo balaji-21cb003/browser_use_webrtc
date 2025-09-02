@@ -140,10 +140,17 @@ class UnifiedBrowserUseAgent:
                 # Connect to existing browser via WebSocket CDP endpoint
                 print(f"🔗 Connecting to existing browser session: {browser_context_id}")
                 
-                # Create BrowserSession that connects to existing browser
+                # Create BrowserSession that connects to existing browser with increased timeouts
                 browser_session = BrowserSession(
                     cdp_url=browser_context_id,
-                    is_local=False  # Connect to existing browser, don't launch new one
+                    is_local=False,  # Connect to existing browser, don't launch new one
+                    browser_config={
+                        'protocolTimeout': 120000,  # Increase CDP timeout to 2 minutes
+                        'browserTimeout': 300000,   # Increase browser timeout to 5 minutes  
+                        'maxWaitTime': 60000,       # Increase max wait time to 1 minute
+                        'pageLoadTimeout': 60000,   # Increase page load timeout
+                        'navigationTimeout': 60000, # Increase navigation timeout
+                    }
                 )
                 
                 print(f"✅ Created browser session for existing browser")

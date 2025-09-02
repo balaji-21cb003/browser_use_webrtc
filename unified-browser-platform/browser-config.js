@@ -6,7 +6,9 @@
 export const BROWSER_CONFIG = {
   // Set to true to completely hide the browser (headless mode)
   // Set to false to show the browser window
-  HEADLESS: process.env.BROWSER_HEADLESS === "true",
+  // Force headless on Linux cloud servers for stability
+  HEADLESS:
+    process.env.BROWSER_HEADLESS === "true" || process.platform === "linux",
 
   // Chrome executable path - Force use of system Chrome
   // This bypasses Puppeteer's bundled Chrome version requirement
@@ -45,6 +47,26 @@ export const BROWSER_CONFIG = {
     "--disable-zoom", // Disable zoom functionality
     "--app=about:blank", // App mode to hide taskbar on Windows
     "--kiosk", // Kiosk mode for fullscreen without taskbar
+    // Linux cloud server stability fixes
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--single-process",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-extensions",
+    "--disable-plugins",
+    "--disable-sync",
+    "--memory-pressure-off",
+    "--max_old_space_size=4096",
+    "--disable-ipc-flooding-protection",
+    "--aggressive-cache-discard",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--allow-running-insecure-content",
+    "--disable-component-extensions-with-background-pages",
   ],
 };
 
