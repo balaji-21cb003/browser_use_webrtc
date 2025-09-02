@@ -39,6 +39,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Task tracking
     this.activeTasks = new Map(); // Track active tasks by taskId
     this.taskHistory = []; // Store completed tasks
+    this.taskLogs = new Map(); // Store detailed logs for each task
+    this.taskStdout = new Map(); // Store stdout for each task
+    this.taskStderr = new Map(); // Store stderr for each task
 
     // Concurrent execution configuration
     this.concurrencyConfig = {
@@ -294,7 +297,20 @@ export class BrowserUseIntegrationService extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      const executionId = `browseruse_${sessionId}_${Date.now()}`;
+      // Check if this is a restart scenario
+      const isRestart = options.isRestart && options.taskId;
+      let executionId;
+
+      if (isRestart) {
+        // For restarts, generate a new executionId but preserve the task
+        executionId = `browseruse_${sessionId}_${Date.now()}_restart`;
+        this.logger.info(
+          `🔄 Restarting task ${options.taskId} with new executionId: ${executionId}`,
+        );
+      } else {
+        executionId = `browseruse_${sessionId}_${Date.now()}`;
+      }
+
       const args = [this.agentScriptPath, task, maxSteps.toString(), sessionId]; // Pass sessionId as 4th argument
 
       // Add browser context if provided or if using existing browser
@@ -435,10 +451,44 @@ export class BrowserUseIntegrationService extends EventEmitter {
         currentStep: 0,
       });
 
+      // Update task info with executionId for process tracking
+      if (options.taskId) {
+        const taskInfo = this.activeTasks.get(options.taskId);
+        if (taskInfo) {
+          // Update the execution details for restart
+          taskInfo.executionId = executionId;
+          taskInfo.status = "running";
+          if (isRestart) {
+            taskInfo.restartedAt = new Date().toISOString();
+            taskInfo.pausedByUser = false;
+            taskInfo.pausedGracefully = false;
+            this.logger.info(
+              `� Task ${options.taskId} restarted with execution ${executionId}`,
+            );
+          } else {
+            this.logger.info(
+              `�🔗 Task ${options.taskId} linked to execution ${executionId}`,
+            );
+          }
+        } else if (!isRestart) {
+          // Only log error if this is not a restart (restart should have existing task info)
+          this.logger.warn(`Task ${options.taskId} not found in activeTasks`);
+        }
+      }
+
       // Handle stdout data with enhanced parsing
       agentProcess.stdout.on("data", (data) => {
         const chunk = data.toString();
         stdout += chunk;
+
+        // Store stdout data in task storage
+        if (!this.taskStdout.has(sessionId)) {
+          this.taskStdout.set(sessionId, []);
+        }
+        this.taskStdout.get(sessionId).push({
+          timestamp: new Date().toISOString(),
+          data: chunk,
+        });
 
         // TESTING: Print raw stdout data in real-time
         const lines = chunk
@@ -478,6 +528,15 @@ export class BrowserUseIntegrationService extends EventEmitter {
       agentProcess.stderr.on("data", (data) => {
         const chunk = data.toString();
         stderr += chunk;
+
+        // Store stderr data in task storage
+        if (!this.taskStderr.has(sessionId)) {
+          this.taskStderr.set(sessionId, []);
+        }
+        this.taskStderr.get(sessionId).push({
+          timestamp: new Date().toISOString(),
+          data: chunk,
+        });
 
         // TESTING: Print raw stderr data
         console.log("❌ [TESTING] Python stderr chunk:", chunk.trim());
@@ -591,6 +650,23 @@ export class BrowserUseIntegrationService extends EventEmitter {
             reject(enhancedErrorResult);
           }
         } else {
+          // Check if this task was paused by user (Windows graceful termination)
+          const taskInfo = this.findTaskByExecutionId(executionId);
+
+          if (
+            taskInfo &&
+            taskInfo.pausedByUser &&
+            taskInfo.status === "paused"
+          ) {
+            // Task was paused by user, don't treat as failure
+            this.logger.info(
+              `⏸️ Process exited for paused task (expected on Windows): ${executionId}`,
+            );
+
+            // Don't call reject - this is expected behavior for pause
+            return;
+          }
+
           const errorResult = this.createErrorResult(
             `Agent process exited with code ${code}`,
             executionId,
@@ -668,6 +744,12 @@ export class BrowserUseIntegrationService extends EventEmitter {
   parseAndEmitProgress(chunk, executionId, sessionId) {
     const lines = chunk.split("\n");
 
+    // Get or create logs array for this execution
+    if (!this.taskLogs.has(executionId)) {
+      this.taskLogs.set(executionId, []);
+    }
+    const taskLogs = this.taskLogs.get(executionId);
+
     for (const line of lines) {
       const trimmedLine = line.trim();
       if (!trimmedLine) continue;
@@ -698,6 +780,17 @@ export class BrowserUseIntegrationService extends EventEmitter {
             sessionId: sessionId,
             originalMessage: trimmedLine,
           };
+
+          // Store step log
+          taskLogs.push({
+            timestamp: new Date().toISOString(),
+            level: "info",
+            message: trimmedLine,
+            type: "step",
+            taskId: executionId,
+            sessionId: sessionId,
+            stepNumber: stepNumber,
+          });
         }
       } else if (trimmedLine.includes("🦾 [ACTION")) {
         eventType = "action";
@@ -710,6 +803,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
           sessionId: sessionId,
           originalMessage: trimmedLine,
         };
+
+        // Store action log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "action",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
       } else if (trimmedLine.includes("🎯 Next goal:")) {
         eventType = "goal";
         const enhancedGoalMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
@@ -721,6 +824,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
           sessionId: sessionId,
           originalMessage: trimmedLine,
         };
+
+        // Store goal log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "goal",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
       } else if (
         trimmedLine.includes("👍 Eval: Success") ||
         trimmedLine.includes("✅")
@@ -735,9 +848,19 @@ export class BrowserUseIntegrationService extends EventEmitter {
           sessionId: sessionId,
           originalMessage: trimmedLine,
         };
+
+        // Store success log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "success",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
       } else if (
         trimmedLine.includes("⚠️ Eval: Failure") ||
-        trimmedLine.includes("❌")
+        (trimmedLine.includes("❌") && !trimmedLine.includes("[TESTING]"))
       ) {
         eventType = "warning";
         const enhancedWarningMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
@@ -749,6 +872,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
           sessionId: sessionId,
           originalMessage: trimmedLine,
         };
+
+        // Store warning log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "warning",
+          message: trimmedLine,
+          type: "warning",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
       } else if (trimmedLine.includes("🔗 Navigated to")) {
         eventType = "navigation";
         const enhancedNavMessage = `[TASK:${executionId}] [SESSION:${sessionId}] ${trimmedLine}`;
@@ -760,6 +893,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
           sessionId: sessionId,
           originalMessage: trimmedLine,
         };
+
+        // Store navigation log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "navigation",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
       } else if (trimmedLine.includes("INFO") || trimmedLine.includes("🧠")) {
         eventType = "info";
         // Add task/session info to general INFO messages too
@@ -770,6 +913,49 @@ export class BrowserUseIntegrationService extends EventEmitter {
           sessionId: sessionId,
           originalMessage: trimmedLine,
         };
+
+        // Store general info log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "info",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
+      } else if (trimmedLine.includes("💰 TOKEN_USAGE:")) {
+        // Store token usage log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "token_usage",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
+      } else if (
+        trimmedLine.includes("🖱️ Clicked") ||
+        trimmedLine.includes("⌨️ Typed")
+      ) {
+        // Store interaction log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "interaction",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
+      } else if (trimmedLine.includes("❔ Eval:")) {
+        // Store evaluation log
+        taskLogs.push({
+          timestamp: new Date().toISOString(),
+          level: "info",
+          message: trimmedLine,
+          type: "evaluation",
+          taskId: executionId,
+          sessionId: sessionId,
+        });
       }
 
       this.emit("taskProgress", {
@@ -941,6 +1127,18 @@ export class BrowserUseIntegrationService extends EventEmitter {
     return Array.from(this.activeAgents.values()).find(
       (agent) => agent.taskId === taskId,
     );
+  }
+
+  /**
+   * Find task by executionId
+   */
+  findTaskByExecutionId(executionId) {
+    for (const [taskId, taskInfo] of this.activeTasks.entries()) {
+      if (taskInfo.executionId === executionId) {
+        return taskInfo;
+      }
+    }
+    return null;
   }
 
   /**
@@ -1585,7 +1783,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
   }
 
   /**
-   * Get logs for a specific task
+   * Get logs for a specific task with enhanced detail
    */
   getTaskLogs(taskId) {
     const logs = [];
@@ -1599,6 +1797,8 @@ export class BrowserUseIntegrationService extends EventEmitter {
       return logs;
     }
 
+    const sessionId = taskInfo.sessionId;
+
     // Add task start log
     logs.push({
       timestamp: taskInfo.startedAt,
@@ -1606,10 +1806,96 @@ export class BrowserUseIntegrationService extends EventEmitter {
       message: `Task started: ${taskInfo.task}`,
       type: "task_start",
       taskId: taskId,
-      sessionId: taskInfo.sessionId,
+      sessionId: sessionId,
     });
 
-    // Add progress logs if available
+    // Add detailed progress logs from enhanced storage
+    const taskLogs = this.taskLogs.get(sessionId);
+    if (taskLogs && taskLogs.length > 0) {
+      logs.push(...taskLogs);
+    }
+
+    // Add stdout logs with enhanced parsing
+    const stdoutLogs = this.taskStdout.get(sessionId);
+    if (stdoutLogs && stdoutLogs.length > 0) {
+      stdoutLogs.forEach((entry) => {
+        const lines = entry.data.split("\n").filter((line) => line.trim());
+        lines.forEach((line) => {
+          const trimmedLine = line.trim();
+          if (trimmedLine) {
+            let level = "info";
+            let type = "stdout";
+
+            // Determine log level and type based on content
+            if (
+              trimmedLine.includes("ERROR") ||
+              trimmedLine.includes("Error")
+            ) {
+              level = "error";
+              type = "error";
+            } else if (
+              trimmedLine.includes("WARNING") ||
+              trimmedLine.includes("Warning")
+            ) {
+              level = "warning";
+              type = "warning";
+            } else if (
+              trimmedLine.includes("Step") ||
+              trimmedLine.includes("📍")
+            ) {
+              type = "step";
+            } else if (
+              trimmedLine.includes("ACTION") ||
+              trimmedLine.includes("🦾")
+            ) {
+              type = "action";
+            } else if (
+              trimmedLine.includes("Next goal") ||
+              trimmedLine.includes("🎯")
+            ) {
+              type = "goal";
+            } else if (
+              trimmedLine.includes("Eval:") ||
+              trimmedLine.includes("❔")
+            ) {
+              type = "evaluation";
+            }
+
+            logs.push({
+              timestamp: entry.timestamp,
+              level: level,
+              message: trimmedLine,
+              type: type,
+              taskId: taskId,
+              sessionId: sessionId,
+            });
+          }
+        });
+      });
+    }
+
+    // Add stderr logs
+    const stderrLogs = this.taskStderr.get(sessionId);
+    if (stderrLogs && stderrLogs.length > 0) {
+      stderrLogs.forEach((entry) => {
+        const lines = entry.data.split("\n").filter((line) => line.trim());
+        lines.forEach((line) => {
+          const trimmedLine = line.trim();
+          if (trimmedLine) {
+            logs.push({
+              timestamp: entry.timestamp,
+              level: "error",
+              message: trimmedLine,
+              type: "stderr",
+              taskId: taskId,
+              sessionId: sessionId,
+            });
+          }
+        });
+      });
+    }
+
+    // Add legacy progress logs if available
     if (taskInfo.progressLogs && taskInfo.progressLogs.length > 0) {
       logs.push(...taskInfo.progressLogs);
     }
@@ -1622,60 +1908,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
         message: `Task ${taskInfo.status}: ${taskInfo.result?.message || taskInfo.error?.message || "Unknown"}`,
         type: "task_completion",
         taskId: taskId,
-        sessionId: taskInfo.sessionId,
+        sessionId: sessionId,
         status: taskInfo.status,
       });
-    }
-
-    // Add stdout/stderr logs if available
-    const agentInfo = Array.from(this.activeAgents.values()).find(
-      (agent) => agent.taskId === taskId,
-    );
-
-    if (agentInfo) {
-      // Parse stdout for meaningful log entries
-      if (agentInfo.stdout) {
-        const stdoutLines = agentInfo.stdout.split("\n");
-        stdoutLines.forEach((line, index) => {
-          const trimmedLine = line.trim();
-          if (
-            trimmedLine &&
-            !trimmedLine.includes("INFO") &&
-            !trimmedLine.includes("DEBUG")
-          ) {
-            logs.push({
-              timestamp: new Date(
-                taskInfo.startedAt.getTime() + index * 1000,
-              ).toISOString(),
-              level: "info",
-              message: trimmedLine,
-              type: "stdout",
-              taskId: taskId,
-              sessionId: taskInfo.sessionId,
-            });
-          }
-        });
-      }
-
-      // Parse stderr for error logs
-      if (agentInfo.stderr) {
-        const stderrLines = agentInfo.stderr.split("\n");
-        stderrLines.forEach((line, index) => {
-          const trimmedLine = line.trim();
-          if (trimmedLine) {
-            logs.push({
-              timestamp: new Date(
-                taskInfo.startedAt.getTime() + index * 1000,
-              ).toISOString(),
-              level: "error",
-              message: trimmedLine,
-              type: "stderr",
-              taskId: taskId,
-              sessionId: taskInfo.sessionId,
-            });
-          }
-        });
-      }
     }
 
     // Sort logs by timestamp
@@ -1779,6 +2014,11 @@ export class BrowserUseIntegrationService extends EventEmitter {
       `🛑 Attempting to stop task ${taskId}, status: ${taskInfo.status}`,
     );
 
+    // Check if task is already stopped/completed
+    if (taskInfo.status === "completed" || taskInfo.status === "stopped") {
+      return { success: true, message: "Task is already stopped/completed" };
+    }
+
     // Find the agent process for this task by taskId
     const agentInfo = this.findAgentByTaskId(taskId);
     this.logger.info(`Agent info for task ${taskId}:`, {
@@ -1793,12 +2033,10 @@ export class BrowserUseIntegrationService extends EventEmitter {
         agentInfo.process.kill("SIGTERM");
         this.logger.info(`🛑 Task ${taskId} stopped by user request`);
 
-        // Register task as stopped
-        this.registerTaskError(taskId, {
-          message: "Task stopped by user request",
-          type: "user_stopped",
-          stoppedAt: new Date().toISOString(),
-        });
+        // Mark task as stopped (don't use registerTaskError for user-requested stops)
+        taskInfo.status = "stopped";
+        taskInfo.stoppedAt = new Date().toISOString();
+        taskInfo.stoppedReason = "User requested stop";
 
         return { success: true, message: "Task stopped successfully" };
       } catch (error) {
@@ -1809,17 +2047,15 @@ export class BrowserUseIntegrationService extends EventEmitter {
 
     // If no process found, just mark the task as stopped
     this.logger.warn(`No process found for task ${taskId}, marking as stopped`);
-    this.registerTaskError(taskId, {
-      message: "Task stopped by user request (no process found)",
-      type: "user_stopped",
-      stoppedAt: new Date().toISOString(),
-    });
+    taskInfo.status = "stopped";
+    taskInfo.stoppedAt = new Date().toISOString();
+    taskInfo.stoppedReason = "User requested stop (no active process)";
 
     return { success: true, message: "Task marked as stopped" };
   }
 
   /**
-   * Pause a running task
+   * Pause a running task (Enhanced Windows-compatible implementation)
    */
   pauseTask(taskId) {
     const taskInfo = this.activeTasks.get(taskId);
@@ -1840,15 +2076,46 @@ export class BrowserUseIntegrationService extends EventEmitter {
 
     if (agentInfo && agentInfo.process) {
       try {
-        // Send SIGSTOP to pause the process
-        agentInfo.process.kill("SIGSTOP");
+        // Cross-platform pause implementation
+        if (process.platform === "win32") {
+          // Windows: Use SIGTERM to terminate the process gracefully
+          this.logger.info(
+            `⏸️ Windows pause: Terminating process PID ${agentInfo.process.pid} gracefully`,
+          );
 
-        // Update task status
-        taskInfo.status = "paused";
-        taskInfo.pausedAt = new Date().toISOString();
+          // Mark as paused BEFORE terminating to prevent cleanup
+          taskInfo.status = "paused";
+          taskInfo.pausedAt = new Date().toISOString();
+          taskInfo.pausedProcessPid = agentInfo.process.pid;
+          taskInfo.pausedGracefully = true;
+          taskInfo.pausedByUser = true; // Flag to prevent cleanup on process exit
 
-        this.logger.info(`⏸️ Task ${taskId} paused by user request`);
-        return { success: true, message: "Task paused successfully" };
+          // Now terminate the process
+          agentInfo.process.kill("SIGTERM");
+
+          this.logger.info(
+            `⏸️ Task ${taskId} paused by terminating process gracefully on Windows`,
+          );
+          return {
+            success: true,
+            message: "Task paused successfully (process terminated gracefully)",
+          };
+        } else {
+          // Unix/Linux: Use SIGSTOP to suspend process
+          agentInfo.process.kill("SIGSTOP");
+
+          taskInfo.status = "paused";
+          taskInfo.pausedAt = new Date().toISOString();
+          taskInfo.pausedProcess = agentInfo.process;
+
+          this.logger.info(
+            `⏸️ Task ${taskId} paused using SIGSTOP on Unix/Linux`,
+          );
+          return {
+            success: true,
+            message: "Task paused successfully (process suspended)",
+          };
+        }
       } catch (error) {
         this.logger.error(`Failed to pause task ${taskId}:`, error);
         return { success: false, error: error.message };
@@ -1860,48 +2127,165 @@ export class BrowserUseIntegrationService extends EventEmitter {
     taskInfo.status = "paused";
     taskInfo.pausedAt = new Date().toISOString();
 
-    return { success: true, message: "Task marked as paused" };
+    return {
+      success: true,
+      message: "Task marked as paused (no active process)",
+    };
   }
 
   /**
-   * Resume a paused task
+   * Resume a paused task (Enhanced Windows-compatible implementation)
    */
-  resumeTask(taskId) {
+  async resumeTask(taskId, browserService = null, io = null) {
     const taskInfo = this.activeTasks.get(taskId);
     if (!taskInfo) {
       return { success: false, error: "Task not found" };
     }
 
-    if (taskInfo.status !== "paused") {
-      return { success: false, error: "Task is not paused" };
+    // Debug logging for task status
+    this.logger.info(`🔍 [DEBUG] Resume task ${taskId} - status: ${taskInfo.status}, pausedByUser: ${taskInfo.pausedByUser}, pausedGracefully: ${taskInfo.pausedGracefully}`);
+
+    // Allow resume for both paused and failed tasks that were paused by user
+    if (
+      taskInfo.status !== "paused" &&
+      !(taskInfo.status === "failed" && taskInfo.pausedByUser)
+    ) {
+      return { success: false, error: `Task is not paused (current status: ${taskInfo.status})` };
+    }
+
+    // For Windows, if process was terminated, we need to restart the task
+    if (
+      process.platform === "win32" &&
+      (taskInfo.pausedGracefully || taskInfo.pausedByUser)
+    ) {
+      this.logger.info(
+        `🔄 Windows resume: Restarting task ${taskId} from where it left off`,
+      );
+
+      try {
+        // Get the session information for restarting
+        const sessionId = taskInfo.sessionId;
+        const originalTask = taskInfo.task;
+        const originalOptions = taskInfo.options || {};
+
+        // Check if browser session exists, if not create it
+        if (browserService) {
+          let browserSession = browserService.getSession(sessionId);
+          
+          if (!browserSession) {
+            this.logger.info(
+              `🔄 No browser session found for ${sessionId}, creating new one for restart`,
+            );
+            
+            try {
+              browserSession = await browserService.createSessionWithSeparateBrowser(
+                sessionId,
+                {
+                  headless: false,
+                  width: 1920,
+                  height: 1480,
+                }
+              );
+              
+              this.logger.info(
+                `✅ Created new browser session for restart: ${browserSession.browserWSEndpoint}`,
+              );
+              
+              // Start video streaming for the new session if io is available
+              if (io) {
+                await browserService.startVideoStreaming(sessionId, io);
+                this.logger.info(`🎬 Started video streaming for resumed session ${sessionId}`);
+              }
+            } catch (createError) {
+              this.logger.error(
+                `❌ Failed to create new browser session for restart: ${createError.message}`,
+              );
+              return {
+                success: false,
+                error: `Failed to create browser session: ${createError.message}`,
+              };
+            }
+          } else {
+            this.logger.info(
+              `✅ Browser session already exists for ${sessionId}, using existing session`,
+            );
+          }
+        }
+
+        // Mark task as running again
+        taskInfo.status = "running";
+        taskInfo.resumedAt = new Date().toISOString();
+        taskInfo.pausedByUser = false;
+        taskInfo.pausedGracefully = false;
+
+        // Restart the execution with the same session and task parameters
+        this.logger.info(
+          `🔄 Restarting task ${taskId} with session ${sessionId}`,
+        );
+
+        // Use the existing executeTask method to restart
+        this.executeTask(sessionId, originalTask, {
+          ...originalOptions,
+          browserService, // Pass the browser service for session management
+          io, // Pass the io for streaming
+          taskId: taskId, // Preserve the same task ID
+          isRestart: true, // Flag to indicate this is a restart
+        }).catch((error) => {
+          this.logger.error(`Failed to restart task ${taskId}:`, error);
+          this.registerTaskError(taskId, error.message || "Restart failed");
+        });
+
+        return {
+          success: true,
+          message: "Task resumed successfully (restarted on Windows)",
+        };
+      } catch (error) {
+        this.logger.error(`Failed to restart task ${taskId}:`, error);
+        taskInfo.status = "failed";
+        taskInfo.error = `Restart failed: ${error.message}`;
+        return {
+          success: false,
+          error: `Failed to restart task: ${error.message}`,
+        };
+      }
     }
 
     // Find the agent process for this task by taskId
     const agentInfo = this.findAgentByTaskId(taskId);
 
-    if (agentInfo && agentInfo.process) {
+    if (agentInfo && agentInfo.process && process.platform !== "win32") {
       try {
-        // Send SIGCONT to resume the process
+        // Unix/Linux: Resume suspended process
         agentInfo.process.kill("SIGCONT");
 
-        // Update task status
         taskInfo.status = "running";
         taskInfo.resumedAt = new Date().toISOString();
+        delete taskInfo.pausedProcess;
 
-        this.logger.info(`▶️ Task ${taskId} resumed by user request`);
-        return { success: true, message: "Task resumed successfully" };
+        this.logger.info(
+          `▶️ Task ${taskId} resumed using SIGCONT on Unix/Linux`,
+        );
+        return {
+          success: true,
+          message: "Task resumed successfully (process resumed)",
+        };
       } catch (error) {
         this.logger.error(`Failed to resume task ${taskId}:`, error);
         return { success: false, error: error.message };
       }
     }
 
-    // If no process found, just mark the task as running
-    this.logger.warn(`No process found for task ${taskId}, marking as running`);
+    // Fallback: Just mark as running (for edge cases)
+    this.logger.warn(
+      `No resumable process found for task ${taskId}, marking as running`,
+    );
     taskInfo.status = "running";
     taskInfo.resumedAt = new Date().toISOString();
 
-    return { success: true, message: "Task marked as running" };
+    return {
+      success: true,
+      message: "Task marked as running (no active process to resume)",
+    };
   }
 
   /**
@@ -2160,6 +2544,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Remove from running tasks
     this.runningTasks.delete(taskId);
 
+    // Clean up task storage for completed task
+    this.cleanupTaskStorage(taskId);
+
     // Check if there are queued tasks to start
     if (
       this.taskQueue.length > 0 &&
@@ -2185,6 +2572,43 @@ export class BrowserUseIntegrationService extends EventEmitter {
     this.logger.debug(
       `📊 Concurrency status: ${this.runningTasks.size} running, ${this.taskQueue.length} queued`,
     );
+  }
+
+  /**
+   * Clean up task storage for completed tasks
+   */
+  cleanupTaskStorage(taskId) {
+    try {
+      // Get task info to find sessionId
+      const taskInfo =
+        this.activeTasks.get(taskId) ||
+        this.taskHistory.find((task) => task.taskId === taskId);
+
+      if (taskInfo && taskInfo.sessionId) {
+        const sessionId = taskInfo.sessionId;
+
+        // Keep logs for a period of time before cleanup (e.g., 1 hour)
+        // For now, we'll keep them until manually cleaned up
+        // In a production environment, you might want to implement TTL cleanup
+
+        this.logger.debug(
+          `🧹 Task storage preserved for session ${sessionId} (taskId: ${taskId})`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to cleanup task storage for ${taskId}:`,
+        error.message,
+      );
+    }
+  }
+
+  /**
+   * Get task information by taskId
+   */
+  getTaskInfo(taskId) {
+    return this.activeTasks.get(taskId) ||
+           this.taskHistory.find((task) => task.taskId === taskId);
   }
 
   // ============== END CONCURRENT EXECUTION METHODS ==============

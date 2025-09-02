@@ -37,7 +37,7 @@ export class BrowserStreamingService extends EventEmitter {
   async createSessionWithSeparateBrowser(sessionId, options = {}) {
     try {
       this.logger.info(
-        `🔗 Creating streaming session ${sessionId} with SEPARATE browser for parallel execution`
+        `🔗 Creating streaming session ${sessionId} with SEPARATE browser for parallel execution`,
       );
 
       // Create a NEW browser instance for this session to enable true parallelism
@@ -103,7 +103,7 @@ export class BrowserStreamingService extends EventEmitter {
 
       await page.setViewport(defaultViewport);
       await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       );
 
       // Set extra headers to help with site compatibility
@@ -156,7 +156,7 @@ export class BrowserStreamingService extends EventEmitter {
       await this.setupTabManagement(sessionId);
 
       this.logger.info(
-        `✅ Streaming session created for ${sessionId} with SEPARATE browser for parallel execution`
+        `✅ Streaming session created for ${sessionId} with SEPARATE browser for parallel execution`,
       );
       this.logger.info(`🔌 Session CDP Endpoint: ${browserWSEndpoint}`);
 
@@ -164,7 +164,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Failed to create streaming session ${sessionId}:`,
-        error
+        error,
       );
       throw error;
     }
@@ -182,7 +182,6 @@ export class BrowserStreamingService extends EventEmitter {
           height: options.height || 1200, // Increased for better content viewing
           deviceScaleFactor: 1,
         },
-        protocolTimeout: 120000, // Increase CDP protocol timeout to 2 minutes
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -234,7 +233,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Set up page configuration
       await page.setViewport(defaultOptions.defaultViewport);
       await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       );
 
       // Set extra headers to help with site compatibility
@@ -272,7 +271,7 @@ export class BrowserStreamingService extends EventEmitter {
 
       this.sessions.set(sessionId, session);
       this.logger.info(
-        `✅ Browser launched successfully for session: ${sessionId}`
+        `✅ Browser launched successfully for session: ${sessionId}`,
       );
       this.logger.info(`🔌 CDP WebSocket endpoint: ${browserWSEndpoint}`);
 
@@ -280,7 +279,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Failed to launch browser for session ${sessionId}:`,
-        error
+        error,
       );
       throw error;
     }
@@ -305,7 +304,7 @@ export class BrowserStreamingService extends EventEmitter {
 
       // Start screencast with higher quality settings
       this.logger.debug(
-        `🎬 Sending Page.startScreencast for session ${sessionId}`
+        `🎬 Sending Page.startScreencast for session ${sessionId}`,
       );
       try {
         const result = await session.client.send("Page.startScreencast", {
@@ -317,7 +316,7 @@ export class BrowserStreamingService extends EventEmitter {
         });
         this.logger.debug(
           `✅ Page.startScreencast sent successfully for session ${sessionId}, result:`,
-          result
+          result,
         );
 
         // Add a small delay to ensure screencast is started
@@ -329,12 +328,12 @@ export class BrowserStreamingService extends EventEmitter {
           window.scrollTo(0, 0);
         });
         this.logger.debug(
-          `🔧 Forced repaint after screencast start for session ${sessionId}`
+          `🔧 Forced repaint after screencast start for session ${sessionId}`,
         );
       } catch (error) {
         this.logger.error(
           `❌ Failed to start screencast for session ${sessionId}:`,
-          error
+          error,
         );
         throw error;
       }
@@ -343,7 +342,7 @@ export class BrowserStreamingService extends EventEmitter {
       session.client.on("Page.screencastFrame", async (params) => {
         try {
           this.logger.debug(
-            `📹 Received screencast frame for session ${sessionId}, size: ${params.data.length} chars`
+            `📹 Received screencast frame for session ${sessionId}, size: ${params.data.length} chars`,
           );
 
           // Acknowledge the frame
@@ -354,22 +353,22 @@ export class BrowserStreamingService extends EventEmitter {
           // Send frame to callback
           if (session.streamCallback && session.streaming) {
             this.logger.debug(
-              `📹 Calling streamCallback for session ${sessionId}`
+              `📹 Calling streamCallback for session ${sessionId}`,
             );
             // The data is already base64 encoded, pass it directly
             session.streamCallback(params.data);
             this.logger.debug(
-              `📹 Frame forwarded to callback for session ${sessionId}`
+              `📹 Frame forwarded to callback for session ${sessionId}`,
             );
           } else {
             this.logger.warn(
-              `📹 No callback or streaming disabled for session ${sessionId}`
+              `📹 No callback or streaming disabled for session ${sessionId}`,
             );
           }
         } catch (error) {
           this.logger.error(
             `Error handling screencast frame for session ${sessionId}:`,
-            error
+            error,
           );
         }
       });
@@ -378,7 +377,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Failed to start streaming for session ${sessionId}:`,
-        error
+        error,
       );
       session.streaming = false;
       throw error;
@@ -402,7 +401,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Failed to stop streaming for session ${sessionId}:`,
-        error
+        error,
       );
     }
   }
@@ -423,7 +422,7 @@ export class BrowserStreamingService extends EventEmitter {
 
       await session.page.goto(url, {
         waitUntil: "networkidle0",
-        timeout: 120000, // Increase timeout to 2 minutes for cloud servers
+        timeout: 30000,
       });
 
       session.lastActivity = new Date();
@@ -431,7 +430,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Navigation failed for session ${sessionId}:`,
-        error
+        error,
       );
       throw error;
     }
@@ -443,7 +442,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Session exists in SessionManager but streaming hasn't started yet (no browser created)
       // This is normal when user creates session but hasn't submitted a task yet
       this.logger.warn(
-        `Mouse event for session ${sessionId} - streaming not started yet (waiting for task execution)`
+        `Mouse event for session ${sessionId} - streaming not started yet (waiting for task execution)`,
       );
       return {
         success: false,
@@ -454,7 +453,7 @@ export class BrowserStreamingService extends EventEmitter {
     // Check if session is still valid and page is open
     if (!session.page || session.page.isClosed()) {
       this.logger.warn(
-        `Mouse event for session ${sessionId} - page is closed or invalid`
+        `Mouse event for session ${sessionId} - page is closed or invalid`,
       );
       return {
         success: false,
@@ -482,7 +481,7 @@ export class BrowserStreamingService extends EventEmitter {
               error.message.includes("Target closed")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during click event`
+                `Session ${sessionId} closed during click event`,
               );
               return { success: false, message: "Session closed" };
             }
@@ -501,7 +500,7 @@ export class BrowserStreamingService extends EventEmitter {
                 error.message.includes("Target closed")
               ) {
                 this.logger.warn(
-                  `Session ${sessionId} closed during mousedown event`
+                  `Session ${sessionId} closed during mousedown event`,
                 );
                 return { success: false, message: "Session closed" };
               }
@@ -522,7 +521,7 @@ export class BrowserStreamingService extends EventEmitter {
                 error.message.includes("Target closed")
               ) {
                 this.logger.warn(
-                  `Session ${sessionId} closed during mouseup event`
+                  `Session ${sessionId} closed during mouseup event`,
                 );
                 return { success: false, message: "Session closed" };
               }
@@ -540,7 +539,7 @@ export class BrowserStreamingService extends EventEmitter {
               error.message.includes("Target closed")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during mousemove event`
+                `Session ${sessionId} closed during mousemove event`,
               );
               return { success: false, message: "Session closed" };
             }
@@ -559,7 +558,7 @@ export class BrowserStreamingService extends EventEmitter {
               error.message.includes("Target closed")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during scroll event`
+                `Session ${sessionId} closed during scroll event`,
               );
               return { success: false, message: "Session closed" };
             }
@@ -578,7 +577,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Mouse event failed for session ${sessionId}:`,
-        error
+        error,
       );
       throw error;
     }
@@ -590,7 +589,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Session exists in SessionManager but streaming hasn't started yet (no browser created)
       // This is normal when user creates session but hasn't submitted a task yet
       this.logger.warn(
-        `Keyboard event for session ${sessionId} - streaming not started yet (waiting for task execution)`
+        `Keyboard event for session ${sessionId} - streaming not started yet (waiting for task execution)`,
       );
       return {
         success: false,
@@ -601,7 +600,7 @@ export class BrowserStreamingService extends EventEmitter {
     // Check if session is still valid and page is open
     if (!session.page || session.page.isClosed()) {
       this.logger.warn(
-        `Keyboard event for session ${sessionId} - page is closed or invalid`
+        `Keyboard event for session ${sessionId} - page is closed or invalid`,
       );
       return {
         success: false,
@@ -623,7 +622,7 @@ export class BrowserStreamingService extends EventEmitter {
               error.message.includes("Target closed")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during keydown event`
+                `Session ${sessionId} closed during keydown event`,
               );
               return { success: false, message: "Session closed" };
             }
@@ -639,7 +638,7 @@ export class BrowserStreamingService extends EventEmitter {
               error.message.includes("Target closed")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during keyup event`
+                `Session ${sessionId} closed during keyup event`,
               );
               return { success: false, message: "Session closed" };
             }
@@ -669,7 +668,7 @@ export class BrowserStreamingService extends EventEmitter {
               error.message.includes("Target closed")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during press event`
+                `Session ${sessionId} closed during press event`,
               );
               return { success: false, message: "Session closed" };
             }
@@ -681,14 +680,14 @@ export class BrowserStreamingService extends EventEmitter {
       }
 
       this.logger.debug(
-        `Keyboard event processed: ${type} (${key || text}) for session ${sessionId}`
+        `Keyboard event processed: ${type} (${key || text}) for session ${sessionId}`,
       );
 
       return { success: true };
     } catch (error) {
       this.logger.error(
         `❌ Keyboard event failed for session ${sessionId}:`,
-        error
+        error,
       );
       throw error;
     }
@@ -713,7 +712,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Screenshot failed for session ${sessionId}:`,
-        error
+        error,
       );
       throw error;
     }
@@ -754,7 +753,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Failed to close browser for session ${sessionId}:`,
-        error
+        error,
       );
       this.sessions.delete(sessionId); // Remove anyway
     }
@@ -777,7 +776,7 @@ export class BrowserStreamingService extends EventEmitter {
     this.logger.info("🧹 Cleaning up Browser Streaming Service...");
 
     const cleanupPromises = Array.from(this.sessions.keys()).map((sessionId) =>
-      this.closeBrowser(sessionId)
+      this.closeBrowser(sessionId),
     );
 
     await Promise.allSettled(cleanupPromises);
@@ -818,7 +817,7 @@ export class BrowserStreamingService extends EventEmitter {
 
     if (session.streaming) {
       this.logger.warn(
-        `⚠️ Session ${sessionId} already streaming - restarting streaming`
+        `⚠️ Session ${sessionId} already streaming - restarting streaming`,
       );
       // Force restart streaming by stopping first
       await this.stopStreaming(sessionId);
@@ -828,7 +827,7 @@ export class BrowserStreamingService extends EventEmitter {
 
     try {
       this.logger.info(
-        `🎬 Starting CDP screencast for single page streaming - session ${sessionId}`
+        `🎬 Starting CDP screencast for single page streaming - session ${sessionId}`,
       );
       session.streaming = true;
       session.streamCallback = (frame) => {
@@ -843,12 +842,12 @@ export class BrowserStreamingService extends EventEmitter {
       await this.startStreaming(sessionId, session.streamCallback);
 
       this.logger.info(
-        `✅ CDP screencast started for session ${sessionId} - single page streaming`
+        `✅ CDP screencast started for session ${sessionId} - single page streaming`,
       );
     } catch (error) {
       this.logger.error(
         `❌ Failed to start CDP screencast for session ${sessionId}:`,
-        error
+        error,
       );
       session.streaming = false;
       throw error;
@@ -875,7 +874,7 @@ export class BrowserStreamingService extends EventEmitter {
     } catch (error) {
       this.logger.error(
         `❌ Failed to stop CDP screencast for session ${sessionId}:`,
-        error
+        error,
       );
       // Force stop anyway
       session.streaming = false;
@@ -895,13 +894,13 @@ export class BrowserStreamingService extends EventEmitter {
       const session = this.sessions.get(sessionId);
       if (!session) {
         this.logger.error(
-          `❌ Session ${sessionId} not found for page recreation`
+          `❌ Session ${sessionId} not found for page recreation`,
         );
         return false;
       }
 
       this.logger.info(
-        `🔄 Recreating browser page for session ${sessionId}...`
+        `🔄 Recreating browser page for session ${sessionId}...`,
       );
 
       // Close existing page if it exists
@@ -924,7 +923,7 @@ export class BrowserStreamingService extends EventEmitter {
       });
 
       await newPage.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       );
 
       // Set extra headers
@@ -941,7 +940,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Re-protect the new page
       newPage.on("close", async () => {
         this.logger.warn(
-          `🚫 Browser close attempt blocked for session ${sessionId}`
+          `🚫 Browser close attempt blocked for session ${sessionId}`,
         );
         await this.recreatePage(sessionId);
       });
@@ -957,13 +956,13 @@ export class BrowserStreamingService extends EventEmitter {
       });
 
       this.logger.info(
-        `✅ Browser page recreated successfully for session ${sessionId}`
+        `✅ Browser page recreated successfully for session ${sessionId}`,
       );
       return true;
     } catch (error) {
       this.logger.error(
         `❌ Failed to recreate browser page for session ${sessionId}:`,
-        error
+        error,
       );
       return false;
     }
@@ -997,7 +996,7 @@ export class BrowserStreamingService extends EventEmitter {
       session.browser.on("targetcreated", async (target) => {
         if (target.type() === "page") {
           this.logger.info(
-            `🆕 New tab created in session ${sessionId}: ${target.url()}`
+            `🆕 New tab created in session ${sessionId}: ${target.url()}`,
           );
 
           try {
@@ -1024,7 +1023,7 @@ export class BrowserStreamingService extends EventEmitter {
                 !initialUrl.startsWith("chrome://")
               ) {
                 this.logger.info(
-                  `🚀 IMMEDIATE switch to new tab with content ${newTargetId}: ${initialUrl}`
+                  `🚀 IMMEDIATE switch to new tab with content ${newTargetId}: ${initialUrl}`,
                 );
                 await this.switchToTab(sessionId, newTargetId);
               }
@@ -1047,7 +1046,7 @@ export class BrowserStreamingService extends EventEmitter {
                     }
 
                     this.logger.info(
-                      `🔄 FORCE switch to navigated tab ${newTargetId}: ${currentUrl}`
+                      `🔄 FORCE switch to navigated tab ${newTargetId}: ${currentUrl}`,
                     );
                     await this.switchToTab(sessionId, newTargetId);
                   }
@@ -1065,19 +1064,19 @@ export class BrowserStreamingService extends EventEmitter {
                   for (const page of allPages) {
                     if (page === newPage && page.url() !== "about:blank") {
                       this.logger.info(
-                        `🎯 Page loaded and potentially active: ${newTargetId} - ${page.url()}`
+                        `🎯 Page loaded and potentially active: ${newTargetId} - ${page.url()}`,
                       );
                       // Switch streaming to this tab as it's likely being used
                       setTimeout(
                         () => this.switchToTab(sessionId, newTargetId),
-                        100
+                        100,
                       );
                       break;
                     }
                   }
                 } catch (error) {
                   this.logger.error(
-                    `Error checking page activity: ${error.message}`
+                    `Error checking page activity: ${error.message}`,
                   );
                 }
               });
@@ -1112,7 +1111,7 @@ export class BrowserStreamingService extends EventEmitter {
               // This section is now handled above - removing duplicate
 
               this.logger.info(
-                `📑 Tab registry updated for session ${sessionId}, total tabs: ${session.tabs.size}`
+                `📑 Tab registry updated for session ${sessionId}, total tabs: ${session.tabs.size}`,
               );
             }
           } catch (error) {
@@ -1135,7 +1134,7 @@ export class BrowserStreamingService extends EventEmitter {
               tabInfo.url = tabInfo.page.url();
 
               this.logger.debug(
-                `📝 Tab updated: ${tabInfo.title} (${tabInfo.url})`
+                `📝 Tab updated: ${tabInfo.title} (${tabInfo.url})`,
               );
 
               // If URL changed significantly, this tab is likely being actively used
@@ -1158,7 +1157,7 @@ export class BrowserStreamingService extends EventEmitter {
                     tabInfo.url.includes("form"));
 
                 this.logger.info(
-                  `🔍 Tab ${targetId} navigated: ${oldUrl} → ${tabInfo.url} - IMMEDIATE SWITCH${isHighPriority ? " (HIGH PRIORITY)" : ""}`
+                  `🔍 Tab ${targetId} navigated: ${oldUrl} → ${tabInfo.url} - IMMEDIATE SWITCH${isHighPriority ? " (HIGH PRIORITY)" : ""}`,
                 );
 
                 // Immediately switch to this tab as it's clearly being used
@@ -1185,7 +1184,7 @@ export class BrowserStreamingService extends EventEmitter {
         if (target.type() === "page") {
           const targetId = target._targetId;
           this.logger.info(
-            `❌ Tab closed in session ${sessionId}: ${targetId}`
+            `❌ Tab closed in session ${sessionId}: ${targetId}`,
           );
 
           session.tabs.delete(targetId);
@@ -1199,7 +1198,7 @@ export class BrowserStreamingService extends EventEmitter {
           }
 
           this.logger.info(
-            `📑 Tab registry updated for session ${sessionId}, total tabs: ${session.tabs.size}`
+            `📑 Tab registry updated for session ${sessionId}, total tabs: ${session.tabs.size}`,
           );
         }
       });
@@ -1216,7 +1215,7 @@ export class BrowserStreamingService extends EventEmitter {
         const interval = this.tabDetection.getPollingInterval(sessionId);
         session.tabActivityMonitor = setTimeout(
           scheduleNextDetection,
-          interval
+          interval,
         );
       };
 
@@ -1224,7 +1223,7 @@ export class BrowserStreamingService extends EventEmitter {
       scheduleNextDetection();
 
       this.logger.info(
-        `✅ Tab management initialized for session ${sessionId}`
+        `✅ Tab management initialized for session ${sessionId}`,
       );
     } catch (error) {
       this.logger.error(`Failed to setup tab management: ${error.message}`);
@@ -1323,7 +1322,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Get ALL targets from browser directly
       const allTargets = await session.browser.targets();
       const pageTargets = allTargets.filter(
-        (target) => target.type() === "page"
+        (target) => target.type() === "page",
       );
 
       let bestTarget = null;
@@ -1356,7 +1355,7 @@ export class BrowserStreamingService extends EventEmitter {
               lastActiveAt: new Date(),
             });
             this.logger.info(
-              `📝 SYNC: Added tab to registry: ${targetId} - ${title}`
+              `📝 SYNC: Added tab to registry: ${targetId} - ${title}`,
             );
           } else {
             // Update existing tab info
@@ -1408,13 +1407,13 @@ export class BrowserStreamingService extends EventEmitter {
               // Check for automation-specific classes or attributes
               const hasAutomationClasses =
                 document.querySelector(
-                  '.browser-use-target, .automation-highlight, [data-testid], [aria-label*="submit"], [type="submit"]'
+                  '.browser-use-target, .automation-highlight, [data-testid], [aria-label*="submit"], [type="submit"]',
                 ) !== null;
 
               // Check for loading states that indicate form submission or navigation
               const isProcessing =
                 document.querySelector(
-                  '.loading, .spinner, [data-loading="true"], .btn-loading'
+                  '.loading, .spinner, [data-loading="true"], .btn-loading',
                 ) !== null || document.readyState === "loading";
 
               // Check for active form interactions
@@ -1475,7 +1474,7 @@ export class BrowserStreamingService extends EventEmitter {
                     recentInteraction: automationActivity.recentInteraction,
                     isProcessing: automationActivity.isProcessing,
                     timeSinceActivity: timeSinceActivity,
-                  }
+                  },
                 );
                 this.lastAutomationLogs.set(logKey, now);
               }
@@ -1529,7 +1528,7 @@ export class BrowserStreamingService extends EventEmitter {
             url.includes("form")
           ) {
             this.logger.info(
-              `🎯 GOOGLE FORMS detected: ${title} (${url}) - Score: ${score}`
+              `🎯 GOOGLE FORMS detected: ${title} (${url}) - Score: ${score}`,
             );
           }
 
@@ -1552,7 +1551,7 @@ export class BrowserStreamingService extends EventEmitter {
         if (!currentTargetIds.has(tabId)) {
           session.tabs.delete(tabId);
           this.logger.info(
-            `🗑️ SYNC: Removed closed tab from registry: ${tabId}`
+            `🗑️ SYNC: Removed closed tab from registry: ${tabId}`,
           );
         }
       }
@@ -1568,7 +1567,7 @@ export class BrowserStreamingService extends EventEmitter {
 
           if (shouldForceSwitch) {
             this.logger.info(
-              `🚀 HIGH PRIORITY SWITCH: ${session.activeTabId} → ${targetId} (${bestUrl}) Score: ${bestScore}`
+              `🚀 HIGH PRIORITY SWITCH: ${session.activeTabId} → ${targetId} (${bestUrl}) Score: ${bestScore}`,
             );
           }
 
@@ -1601,7 +1600,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Use optimized detection service
       const result = await this.tabDetection.optimizedBulletproofDetection(
         session,
-        sessionId
+        sessionId,
       );
 
       if (result && result.page) {
@@ -1623,7 +1622,7 @@ export class BrowserStreamingService extends EventEmitter {
             this.logger.debug(`📑 Added tab ${targetId} to registry: ${title}`);
           } catch (error) {
             this.logger.warn(
-              `⚠️ Could not add tab ${targetId} to registry: ${error.message}`
+              `⚠️ Could not add tab ${targetId} to registry: ${error.message}`,
             );
             return; // Skip switching if we can't register the tab
           }
@@ -1636,7 +1635,7 @@ export class BrowserStreamingService extends EventEmitter {
 
           if (isHighPriority) {
             this.logger.info(
-              `🚀 OPTIMIZED SWITCH: ${session.activeTabId} → ${targetId} (${currentUrl}) Score: ${result.score} Method: ${result.method}`
+              `🚀 OPTIMIZED SWITCH: ${session.activeTabId} → ${targetId} (${currentUrl}) Score: ${result.score} Method: ${result.method}`,
             );
           }
 
@@ -1740,7 +1739,7 @@ export class BrowserStreamingService extends EventEmitter {
       ) {
         // Last 3 seconds
         this.logger.info(
-          `🚀 FORCE switching to recently navigated tab: ${session.activeTabId} → ${mostRecentNavigationTab}`
+          `🚀 FORCE switching to recently navigated tab: ${session.activeTabId} → ${mostRecentNavigationTab}`,
         );
         await this.switchToTab(sessionId, mostRecentNavigationTab);
         return;
@@ -1749,7 +1748,7 @@ export class BrowserStreamingService extends EventEmitter {
       // Otherwise switch to best scoring tab
       if (bestTab && bestTab !== session.activeTabId && bestScore > 200) {
         this.logger.info(
-          `🎯 Smart switching to best tab: ${session.activeTabId} → ${bestTab} (score: ${bestScore})`
+          `🎯 Smart switching to best tab: ${session.activeTabId} → ${bestTab} (score: ${bestScore})`,
         );
         await this.switchToTab(sessionId, bestTab);
       }
@@ -1765,7 +1764,7 @@ export class BrowserStreamingService extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) {
       this.logger.error(
-        `❌ SWITCH TO TAB FAILED: Session ${sessionId} not found`
+        `❌ SWITCH TO TAB FAILED: Session ${sessionId} not found`,
       );
       return false;
     }
@@ -1820,7 +1819,7 @@ export class BrowserStreamingService extends EventEmitter {
             };
             session.tabs.set(targetId, tabInfo);
             this.logger.info(
-              `📝 Auto-registered missing tab ${targetId}: ${tabInfo.title}`
+              `📝 Auto-registered missing tab ${targetId}: ${tabInfo.title}`,
             );
           }
         } catch (error) {
@@ -1830,17 +1829,17 @@ export class BrowserStreamingService extends EventEmitter {
 
       if (!tabInfo) {
         this.logger.warn(
-          `❌ Tab ${targetId} not found in session ${sessionId}`
+          `❌ Tab ${targetId} not found in session ${sessionId}`,
         );
         this.logger.warn(
-          `Available tab IDs: ${Array.from(session.tabs.keys()).join(", ")}`
+          `Available tab IDs: ${Array.from(session.tabs.keys()).join(", ")}`,
         );
         return false;
       }
 
       // ALWAYS switch - bulletproof switching
       this.logger.info(
-        `🔄 SWITCHING: ${session.activeTabId || "none"} → ${targetId} in session ${sessionId}: ${tabInfo.title}`
+        `🔄 SWITCHING: ${session.activeTabId || "none"} → ${targetId} in session ${sessionId}: ${tabInfo.title}`,
       );
 
       // Mark all tabs as inactive
@@ -1885,13 +1884,13 @@ export class BrowserStreamingService extends EventEmitter {
           this.tabDetection.setActivityLock(
             sessionId,
             targetId,
-            "github_search_tab"
+            "github_search_tab",
           );
         } else if (isManual) {
           this.tabDetection.setActivityLock(
             sessionId,
             targetId,
-            "manual_switch"
+            "manual_switch",
           );
         }
       }
@@ -1918,7 +1917,7 @@ export class BrowserStreamingService extends EventEmitter {
       return true;
     } catch (error) {
       this.logger.error(
-        `Failed to switch to tab ${targetId}: ${error.message}`
+        `Failed to switch to tab ${targetId}: ${error.message}`,
       );
       return false;
     }
@@ -1933,7 +1932,7 @@ export class BrowserStreamingService extends EventEmitter {
 
     try {
       this.logger.info(
-        `📹 Switching streaming to tab ${targetId} in session ${sessionId}`
+        `📹 Switching streaming to tab ${targetId} in session ${sessionId}`,
       );
 
       const tabInfo = session.tabs.get(targetId);
@@ -1945,7 +1944,7 @@ export class BrowserStreamingService extends EventEmitter {
           await session.client.send("Page.stopScreencast");
         } catch (error) {
           this.logger.warn(
-            `Failed to stop current screencast: ${error.message}`
+            `Failed to stop current screencast: ${error.message}`,
           );
         }
       }
@@ -1983,7 +1982,7 @@ export class BrowserStreamingService extends EventEmitter {
           } catch (error) {
             this.logger.error(
               `Error handling screencast frame for tab ${targetId}:`,
-              error
+              error,
             );
           }
         });
@@ -1992,7 +1991,7 @@ export class BrowserStreamingService extends EventEmitter {
       }
     } catch (error) {
       this.logger.error(
-        `Failed to switch streaming to tab ${targetId}: ${error.message}`
+        `Failed to switch streaming to tab ${targetId}: ${error.message}`,
       );
     }
   }
@@ -2167,7 +2166,7 @@ export class BrowserStreamingService extends EventEmitter {
                   }
                 }
               },
-              { passive: true }
+              { passive: true },
             );
           });
 
@@ -2179,7 +2178,7 @@ export class BrowserStreamingService extends EventEmitter {
 
               // Check for search results or navigation changes
               const hasSearchResults = document.querySelector(
-                '[data-testid*="search"], .search-results, #search-results'
+                '[data-testid*="search"], .search-results, #search-results',
               );
               if (hasSearchResults) {
                 window.searchActivity = true;
