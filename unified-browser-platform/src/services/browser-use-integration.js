@@ -2143,14 +2143,19 @@ export class BrowserUseIntegrationService extends EventEmitter {
     }
 
     // Debug logging for task status
-    this.logger.info(`🔍 [DEBUG] Resume task ${taskId} - status: ${taskInfo.status}, pausedByUser: ${taskInfo.pausedByUser}, pausedGracefully: ${taskInfo.pausedGracefully}`);
+    this.logger.info(
+      `🔍 [DEBUG] Resume task ${taskId} - status: ${taskInfo.status}, pausedByUser: ${taskInfo.pausedByUser}, pausedGracefully: ${taskInfo.pausedGracefully}`,
+    );
 
     // Allow resume for both paused and failed tasks that were paused by user
     if (
       taskInfo.status !== "paused" &&
       !(taskInfo.status === "failed" && taskInfo.pausedByUser)
     ) {
-      return { success: false, error: `Task is not paused (current status: ${taskInfo.status})` };
+      return {
+        success: false,
+        error: `Task is not paused (current status: ${taskInfo.status})`,
+      };
     }
 
     // For Windows, if process was terminated, we need to restart the task
@@ -2171,30 +2176,33 @@ export class BrowserUseIntegrationService extends EventEmitter {
         // Check if browser session exists, if not create it
         if (browserService) {
           let browserSession = browserService.getSession(sessionId);
-          
+
           if (!browserSession) {
             this.logger.info(
               `🔄 No browser session found for ${sessionId}, creating new one for restart`,
             );
-            
+
             try {
-              browserSession = await browserService.createSessionWithSeparateBrowser(
-                sessionId,
-                {
-                  headless: false,
-                  width: 1920,
-                  height: 1480,
-                }
-              );
-              
+              browserSession =
+                await browserService.createSessionWithSeparateBrowser(
+                  sessionId,
+                  {
+                    headless: false,
+                    width: 1920,
+                    height: 1480,
+                  },
+                );
+
               this.logger.info(
                 `✅ Created new browser session for restart: ${browserSession.browserWSEndpoint}`,
               );
-              
+
               // Start video streaming for the new session if io is available
               if (io) {
                 await browserService.startVideoStreaming(sessionId, io);
-                this.logger.info(`🎬 Started video streaming for resumed session ${sessionId}`);
+                this.logger.info(
+                  `🎬 Started video streaming for resumed session ${sessionId}`,
+                );
               }
             } catch (createError) {
               this.logger.error(
@@ -2607,8 +2615,10 @@ export class BrowserUseIntegrationService extends EventEmitter {
    * Get task information by taskId
    */
   getTaskInfo(taskId) {
-    return this.activeTasks.get(taskId) ||
-           this.taskHistory.find((task) => task.taskId === taskId);
+    return (
+      this.activeTasks.get(taskId) ||
+      this.taskHistory.find((task) => task.taskId === taskId)
+    );
   }
 
   // ============== END CONCURRENT EXECUTION METHODS ==============

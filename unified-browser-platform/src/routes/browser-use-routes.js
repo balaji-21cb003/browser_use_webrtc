@@ -135,8 +135,9 @@ export function createBrowserUseRoutes(
         .then((result) => {
           // Check if task was paused before scheduling cleanup
           const taskInfo = browserUseService.getTaskInfo(taskId);
-          const isTaskPaused = taskInfo && (taskInfo.status === "paused" || taskInfo.pausedByUser);
-          
+          const isTaskPaused =
+            taskInfo && (taskInfo.status === "paused" || taskInfo.pausedByUser);
+
           if (isTaskPaused) {
             logger.info(
               `⏸️ Task ${taskId} was paused, skipping session cleanup to allow resume`,
@@ -678,7 +679,11 @@ export function createBrowserUseRoutes(
   router.post("/tasks/:taskId/resume", async (req, res) => {
     try {
       const { taskId } = req.params;
-      const result = await browserUseService.resumeTask(taskId, browserService, io);
+      const result = await browserUseService.resumeTask(
+        taskId,
+        browserService,
+        io,
+      );
 
       if (result.success) {
         res.json({
