@@ -1,0 +1,111 @@
+# Docker Compose for Unified Browser Platform
+# Provides a complete setup with all services and dependencies
+
+version: '3.8'
+
+services:
+  # Main Unified Browser Platform
+  unified-browser-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: unified-browser-platform
+    ports:
+      - "3000:3000"    # Main HTTP server
+      - "8080:8080"    # WebRTC streaming (if needed)
+      - "9222:9222"    # Chrome DevTools Protocol
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - BROWSER_HEADLESS=true
+      - DEBUG=false
+      - LOG_LEVEL=info
+      - SESSION_TIMEOUT=1800000
+      - MAX_SESSIONS=10
+      - AUTO_CLEANUP=true
+      # AI Configuration (replace with your actual keys)
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-FnRvTMf6iUsMvJcX551KMybnAT7wjd6KxK6G8XSShi4I9aNdDFJOJQQJ99BFACYeBjFXJ3w3AAABACOGM2XH}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-https://mcp-openai-eastus.openai.azure.com}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4.1}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2025-01-01-preview}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-AIzaSyBlesjcM_k_92Pt7m6X5QpomVixvO5UoJU}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-azure_openai}
+      # Security
+      - API_KEYS=${API_KEYS:-ubp_docker_key_123}
+      - ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+      # Puppeteer Configuration
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+      - CHROME_PATH=/usr/bin/chromium
+    volumes:
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+      - ./screenshots:/app/screenshots
+      - ./uploads:/app/uploads
+      # Mount browser data for persistence
+      - browser_data:/home/appuser/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    networks:
+      - browser_network
+
+  # Optional: Redis for session management (if needed for scaling)
+  redis:
+    image: redis:7-alpine
+    container_name: unified-browser-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - browser_network
+    restart: unless-stopped
+    # Uncomment if you want to expose Redis port
+    # ports:
+    #   - "6379:6379"
+
+  # Optional: Nginx reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    container_name: unified-browser-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - unified-browser-platform
+    networks:
+      - browser_network
+    restart: unless-stopped
+    # Only enable in production
+    profiles:
+      - production
+
+volumes:
+  browser_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  browser_network:
+    driver: bridge
