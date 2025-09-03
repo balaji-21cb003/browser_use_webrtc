@@ -208,7 +208,7 @@ export function createBrowserUseRoutes(
                   `🧹 Scheduling session ${session.id} cleanup in ${cleanupDelay}ms after task completion`,
                 );
                 try {
-                  sessionManager.closeSession(session.id);
+                  sessionManager.destroySession(session.id);
                 } catch (cleanupError) {
                   logger.error(
                     `❌ Failed to cleanup session ${session.id}:`,
@@ -1438,6 +1438,160 @@ export function createBrowserUseRoutes(
         success: false,
         error: error.message,
         type: "session-result-error",
+      });
+    }
+  });
+
+  // **NEW: Download Management Endpoints**
+
+  // Get list of downloaded files
+  router.get("/downloads", async (req, res) => {
+    try {
+      const files = browserUseService.getDownloadedFiles();
+      res.json({
+        success: true,
+        files: files,
+        count: files.length,
+        message: `Found ${files.length} downloaded files`
+      });
+    } catch (error) {
+      logger.error("❌ Failed to get downloaded files:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "download-list-error"
+      });
+    }
+  });
+
+  // Download specific file
+  router.get("/downloads/:fileName", async (req, res) => {
+    try {
+      const { fileName } = req.params;
+      const files = browserUseService.getDownloadedFiles();
+      const file = files.find(f => f.fileName === fileName);
+
+      if (!file) {
+        return res.status(404).json({
+          success: false,
+          error: "File not found",
+          type: "file-not-found"
+        });
+      }
+
+      // Send file
+      res.download(file.filePath, fileName, (err) => {
+        if (err) {
+          logger.error(`❌ Error sending file ${fileName}:`, err);
+          if (!res.headersSent) {
+            res.status(500).json({
+              success: false,
+              error: "Failed to send file",
+              type: "file-send-error"
+            });
+          }
+        } else {
+          logger.info(`📤 File sent successfully: ${fileName}`);
+        }
+      });
+    } catch (error) {
+      logger.error("❌ Failed to download file:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "download-error"
+      });
+    }
+  });
+
+  // Get file content as JSON (for preview)
+  router.get("/downloads/:fileName/preview", async (req, res) => {
+    try {
+      const { fileName } = req.params;
+      const files = browserUseService.getDownloadedFiles();
+      const file = files.find(f => f.fileName === fileName);
+
+      if (!file) {
+        return res.status(404).json({
+          success: false,
+          error: "File not found",
+          type: "file-not-found"
+        });
+      }
+
+      // Read file content
+      const fs = await import('fs');
+      const content = fs.readFileSync(file.filePath, 'utf8');
+
+      // Determine content type
+      const ext = fileName.split('.').pop().toLowerCase();
+      let parsedContent = content;
+
+      if (ext === 'json') {
+        try {
+          parsedContent = JSON.parse(content);
+        } catch (e) {
+          // Keep as string if not valid JSON
+        }
+      } else if (ext === 'csv') {
+        // For CSV, split into lines for preview
+        const lines = content.split('\n').slice(0, 10); // First 10 lines
+        parsedContent = {
+          preview: lines,
+          totalLines: content.split('\n').length,
+          isPreview: content.split('\n').length > 10
+        };
+      }
+
+      res.json({
+        success: true,
+        file: {
+          ...file,
+          content: parsedContent,
+          contentType: ext,
+          size: content.length
+        }
+      });
+    } catch (error) {
+      logger.error("❌ Failed to preview file:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "preview-error"
+      });
+    }
+  });
+
+  // Delete downloaded file
+  router.delete("/downloads/:fileName", async (req, res) => {
+    try {
+      const { fileName } = req.params;
+      const files = browserUseService.getDownloadedFiles();
+      const file = files.find(f => f.fileName === fileName);
+
+      if (!file) {
+        return res.status(404).json({
+          success: false,
+          error: "File not found",
+          type: "file-not-found"
+        });
+      }
+
+      // Delete file
+      const fs = await import('fs');
+      fs.unlinkSync(file.filePath);
+
+      logger.info(`🗑️ Deleted file: ${fileName}`);
+      res.json({
+        success: true,
+        message: `File ${fileName} deleted successfully`
+      });
+    } catch (error) {
+      logger.error("❌ Failed to delete file:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "delete-error"
       });
     }
   });

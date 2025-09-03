@@ -31,6 +31,10 @@ export class BrowserUseIntegrationService extends EventEmitter {
     );
     this.isInitialized = false;
 
+    // Downloads folder setup
+    this.downloadsPath = path.join(this.projectRoot, "downloads");
+    this.ensureDownloadsFolder();
+
     // Token cost tracking
     this.tokenUsage = new Map(); // Track token usage per execution
     this.totalTokenCost = 0;
@@ -54,6 +58,29 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Task queue for handling concurrency limits
     this.taskQueue = [];
     this.runningTasks = new Set();
+
+    // File upload tracking
+    this.uploadedFiles = new Map(); // Track uploaded files per execution/session
+    this.pendingDownloads = new Map(); // Track pending file downloads by executionId_sessionId
+
+    // Set up event listeners for file tracking
+    this.on('fileDownloaded', (event) => {
+      if (event.uploadResult) {
+        const key = `${event.executionId}_${event.sessionId}`;
+        if (!this.uploadedFiles.has(key)) {
+          this.uploadedFiles.set(key, []);
+        }
+        this.uploadedFiles.get(key).push({
+          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          fileName: event.fileName,
+          url: event.uploadResult.url,
+          size: event.uploadResult.size,
+          provider: event.uploadResult.provider,
+          uploadedAt: event.timestamp,
+          localPath: event.filePath
+        });
+      }
+    });
 
     this.logger.info(
       "🔧 Concurrent execution configuration:",
@@ -205,7 +232,90 @@ export class BrowserUseIntegrationService extends EventEmitter {
       script_exists: fs.existsSync(this.agentScriptPath),
       python_exists: fs.existsSync(this.pythonPath),
       browser_use_project_exists: fs.existsSync(this.browserUseProjectPath),
+      downloads_folder_exists: fs.existsSync(this.downloadsPath),
     };
+  }
+
+  /**
+   * Ensure downloads folder exists
+   */
+  ensureDownloadsFolder() {
+    try {
+      if (!fs.existsSync(this.downloadsPath)) {
+        fs.mkdirSync(this.downloadsPath, { recursive: true });
+        this.logger.info(`📁 Created downloads folder: ${this.downloadsPath}`);
+      } else {
+        this.logger.info(`📁 Downloads folder exists: ${this.downloadsPath}`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Failed to create downloads folder: ${error.message}`);
+    }
+  }
+
+  /**
+   * Download file content to downloads folder
+   */
+  async downloadFile(fileName, content, sessionId = null) {
+    try {
+      // Ensure downloads folder exists
+      this.ensureDownloadsFolder();
+
+      // Add timestamp to avoid file conflicts
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const sessionPrefix = sessionId ? `${sessionId.slice(0, 8)}_` : '';
+      const finalFileName = `${sessionPrefix}${timestamp}_${fileName}`;
+      const filePath = path.join(this.downloadsPath, finalFileName);
+
+      // Write the file
+      fs.writeFileSync(filePath, content, 'utf8');
+      
+      this.logger.info(`📥 File downloaded: ${finalFileName}`);
+      this.logger.info(`📂 Full path: ${filePath}`);
+
+      return {
+        success: true,
+        fileName: finalFileName,
+        filePath: filePath,
+        relativePath: `downloads/${finalFileName}`,
+        size: content.length,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error(`❌ Failed to download file ${fileName}: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        fileName: fileName
+      };
+    }
+  }
+
+  /**
+   * Get list of downloaded files
+   */
+  getDownloadedFiles() {
+    try {
+      if (!fs.existsSync(this.downloadsPath)) {
+        return [];
+      }
+
+      const files = fs.readdirSync(this.downloadsPath);
+      return files.map(file => {
+        const filePath = path.join(this.downloadsPath, file);
+        const stats = fs.statSync(filePath);
+        return {
+          fileName: file,
+          filePath: filePath,
+          relativePath: `downloads/${file}`,
+          size: stats.size,
+          createdAt: stats.birthtime,
+          modifiedAt: stats.mtime
+        };
+      }).sort((a, b) => b.createdAt - a.createdAt); // Most recent first
+    } catch (error) {
+      this.logger.error(`❌ Failed to get downloaded files: ${error.message}`);
+      return [];
+    }
   }
 
   /**
@@ -582,7 +692,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
       });
 
       // Handle process completion
-      agentProcess.on("close", (code) => {
+      agentProcess.on("close", async (code) => {
         const executionTime = Date.now() - executionStartTime;
         const agentInfo = this.activeAgents.get(executionId);
         this.activeAgents.delete(executionId);
@@ -620,6 +730,23 @@ export class BrowserUseIntegrationService extends EventEmitter {
               stdoutLength: stdout.length,
               hasJsonResult: stdout.includes("{") && stdout.includes("}"),
             });
+
+            // Wait for all pending file downloads to complete before parsing result
+            const downloadKey = `${executionId}_${sessionId}`;
+            if (this.pendingDownloads.has(downloadKey)) {
+              const pendingDownloads = this.pendingDownloads.get(downloadKey);
+              if (pendingDownloads.length > 0) {
+                this.logger.info(`⏳ Waiting for ${pendingDownloads.length} pending file downloads to complete...`);
+                try {
+                  await Promise.all(pendingDownloads);
+                  this.logger.info(`✅ All file downloads completed for ${executionId}`);
+                } catch (downloadError) {
+                  this.logger.warn(`⚠️ Some file downloads failed for ${executionId}:`, downloadError.message);
+                }
+                // Clean up pending downloads tracking
+                this.pendingDownloads.delete(downloadKey);
+              }
+            }
 
             const result = this.parseAgentResult(
               stdout,
@@ -1035,6 +1162,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
         });
       }
 
+      // **NEW: File Creation Detection and Auto-Download**
+      this.detectAndDownloadFiles(trimmedLine, executionId, sessionId);
+
       this.emit("taskProgress", {
         executionId,
         sessionId,
@@ -1042,6 +1172,445 @@ export class BrowserUseIntegrationService extends EventEmitter {
         data: eventData,
         timestamp: new Date().toISOString(),
       });
+    }
+  }
+
+  /**
+   * Detect file creation in agent output and auto-download files
+   */
+  async detectAndDownloadFiles(logLine, executionId, sessionId) {
+    try {
+      // Patterns that indicate file creation
+      const fileCreationPatterns = [
+        /💾 Data written to file ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml)) successfully/i,
+        /📄 Content saved to file ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /💾 Data written to file ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /File saved: ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /Created file: ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /Saved to: ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /Output written to ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+      ];
+
+      // Content extraction patterns (for files that show content in logs)
+      const contentPatterns = [
+        /💾 Read from file ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /📄 File content for ([^.]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+      ];
+
+      // Attachment patterns - these contain the full file path
+      const attachmentPatterns = [
+        /👉 Attachment :\s*([^\s\n\r]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /Attachment:\s*([^\s\n\r]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+        /📎 Attachment:\s*([^\s\n\r]+\.(csv|json|txt|md|xlsx|pdf|html|xml|yaml|yml))/i,
+      ];
+
+      // Check for attachments first (these contain full paths)
+      for (const pattern of attachmentPatterns) {
+        const match = logLine.match(pattern);
+        if (match) {
+          const fullPath = match[1];
+          this.logger.info(`🔍 Detected attachment with full path: ${fullPath}`);
+          
+          // Track pending download
+          const downloadKey = `${executionId}_${sessionId}`;
+          if (!this.pendingDownloads.has(downloadKey)) {
+            this.pendingDownloads.set(downloadKey, []);
+          }
+          
+          const downloadPromise = this.downloadFileFromFullPath(fullPath, executionId, sessionId)
+            .then(() => ({ fileName: fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath, success: true }))
+            .catch(error => ({ fileName: fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath, success: false, error }));
+            
+          downloadPromise.fileName = fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath;
+          this.pendingDownloads.get(downloadKey).push(downloadPromise);
+          break;
+        }
+      }
+
+      for (const pattern of fileCreationPatterns) {
+        const match = logLine.match(pattern);
+        if (match) {
+          const fileName = match[1];
+          this.logger.info(`🔍 Detected file creation: ${fileName}`);
+          
+          // Try to read the file content from subsequent log lines
+          await this.scheduleFileDownload(fileName, executionId, sessionId);
+          break;
+        }
+      }
+
+      // Also check for content extraction
+      for (const pattern of contentPatterns) {
+        const match = logLine.match(pattern);
+        if (match) {
+          const fileName = match[1];
+          this.logger.info(`🔍 Detected file content available: ${fileName}`);
+          
+          // Schedule for content extraction
+          await this.scheduleFileDownload(fileName, executionId, sessionId);
+          break;
+        }
+      }
+
+    } catch (error) {
+      this.logger.error(`❌ Error in file detection: ${error.message}`);
+    }
+  }
+
+  /**
+   * Schedule file download with retry mechanism
+   */
+  async scheduleFileDownload(fileName, executionId, sessionId) {
+    // Track pending downloads per execution/session
+    const downloadKey = `${executionId}_${sessionId}`;
+    const individualKey = `${sessionId}_${fileName}`;
+    
+    // Avoid duplicate downloads
+    if (this.pendingDownloads.has(downloadKey)) {
+      const existingDownloads = this.pendingDownloads.get(downloadKey);
+      if (existingDownloads.some(p => p.fileName === fileName)) {
+        return;
+      }
+    }
+
+    // Initialize tracking for this execution/session
+    if (!this.pendingDownloads.has(downloadKey)) {
+      this.pendingDownloads.set(downloadKey, []);
+    }
+
+    // Create download promise
+    const downloadPromise = new Promise(async (resolve) => {
+      // Wait a bit for file to be fully written, then attempt download
+      setTimeout(async () => {
+        try {
+          await this.attemptFileDownload(fileName, executionId, sessionId);
+          resolve({ fileName, success: true });
+        } catch (error) {
+          this.logger.error(`❌ Failed to download ${fileName}: ${error.message}`);
+          resolve({ fileName, success: false, error });
+        }
+      }, 2000); // Wait 2 seconds for file to be written
+    });
+
+    // Add to tracking
+    downloadPromise.fileName = fileName;
+    this.pendingDownloads.get(downloadKey).push(downloadPromise);
+
+    return downloadPromise;
+  }
+
+  /**
+   * Attempt to download file from the agent's working directory
+   */
+  async attemptFileDownload(fileName, executionId, sessionId) {
+    try {
+      // Import required modules for ES module compatibility
+      const osModule = await import('os');
+      const fsModule = await import('fs');
+      
+      // Try different possible locations for the file
+      const tempDir = process.env.TEMP || process.env.TMP || '/tmp';
+      const userTempDir = path.join(osModule.homedir(), 'AppData', 'Local', 'Temp');
+      
+      const possiblePaths = [
+        // Python agent working directory
+        path.join(this.projectRoot, fileName),
+        // Current working directory
+        path.join(process.cwd(), fileName),
+        // Project root
+        path.join(this.projectRoot, "python-agent", fileName),
+        // Downloads folder (in case it was already moved)
+        path.join(this.downloadsPath, fileName),
+        // System temp directory
+        path.join(tempDir, fileName),
+        // User temp directory (Windows)
+        path.join(userTempDir, fileName),
+        // Browser use agent temp directories (with wildcard search)
+      ];
+
+      // Add wildcard search for browser_use_agent_* directories in temp
+      try {
+        // Use dynamic import for glob since we're in ES module
+        const { glob } = await import('glob');
+        const tempBrowserUseDirs = await glob(path.join(userTempDir, 'browser_use_agent_*').replace(/\\/g, '/'));
+        for (const tempDir of tempBrowserUseDirs) {
+          possiblePaths.push(path.join(tempDir, fileName));
+        }
+      } catch (error) {
+        // If glob not available, try manual search
+        try {
+          const tempFiles = fsModule.readdirSync(userTempDir);
+          for (const dirName of tempFiles) {
+            if (dirName.startsWith('browser_use_agent_')) {
+              const tempDirPath = path.join(userTempDir, dirName);
+              if (fsModule.statSync(tempDirPath).isDirectory()) {
+                possiblePaths.push(path.join(tempDirPath, fileName));
+              }
+            }
+          }
+        } catch (searchError) {
+          this.logger.warn(`Could not search temp directories: ${searchError.message}`);
+        }
+      }
+
+      let fileContent = null;
+      let sourceFilePath = null;
+
+      for (const filePath of possiblePaths) {
+        try {
+          if (fsModule.existsSync(filePath)) {
+            fileContent = fsModule.readFileSync(filePath, 'utf8');
+            sourceFilePath = filePath;
+            this.logger.info(`📁 Found file at: ${filePath}`);
+            break;
+          }
+        } catch (error) {
+          // Continue to next path
+          continue;
+        }
+      }
+
+      if (fileContent !== null) {
+        // Download the file to our downloads folder
+        const downloadResult = await this.downloadFile(fileName, fileContent, sessionId);
+        
+        if (downloadResult.success) {
+          this.logger.info(`📥 Successfully downloaded: ${fileName}`);
+          this.logger.info(`📂 Downloaded to: ${downloadResult.filePath}`);
+
+          // Upload to file manager and get shareable URL - WAIT for completion
+          const uploadResult = await this.uploadFileToFileManager(
+            downloadResult.filePath, 
+            downloadResult.fileName, 
+            sessionId
+          );
+
+          // Track uploaded file IMMEDIATELY for result inclusion
+          if (uploadResult.success) {
+            const uploadedFilesKey = `${executionId}_${sessionId}`;
+            if (!this.uploadedFiles.has(uploadedFilesKey)) {
+              this.uploadedFiles.set(uploadedFilesKey, []);
+            }
+            
+            // Add the uploaded file info to tracking SYNCHRONOUSLY
+            this.uploadedFiles.get(uploadedFilesKey).push({
+              id: uploadResult.url.split('/').pop().split('.')[0], // Extract file ID from URL
+              fileName: downloadResult.fileName,
+              url: uploadResult.url,
+              size: uploadResult.size,
+              provider: uploadResult.provider,
+              uploadedAt: new Date().toISOString(),
+              localPath: downloadResult.filePath
+            });
+
+            this.logger.info(`📋 IMMEDIATELY tracked uploaded file: ${fileName} -> ${uploadResult.url}`);
+            console.log(`📋 [FILE TRACKING] ${fileName} IMMEDIATELY tracked for inclusion in API result`);
+          }
+
+          // Emit download event with upload result (this now happens after tracking)
+          this.emit("fileDownloaded", {
+            executionId,
+            sessionId,
+            fileName: downloadResult.fileName,
+            filePath: downloadResult.filePath,
+            relativePath: downloadResult.relativePath,
+            size: downloadResult.size,
+            originalPath: sourceFilePath,
+            timestamp: downloadResult.timestamp,
+            uploadResult: uploadResult.success ? {
+              url: uploadResult.url,
+              size: uploadResult.size,
+              provider: uploadResult.provider
+            } : null,
+            uploadError: uploadResult.success ? null : uploadResult.error
+          });
+
+          // Log success for user visibility
+          console.log(`📥 [FILE DOWNLOAD] ${downloadResult.fileName} saved to downloads folder`);
+          console.log(`📂 [FILE DOWNLOAD] Path: ${downloadResult.relativePath}`);
+          
+          if (uploadResult.success) {
+            console.log(`🌐 [FILE UPLOAD] ${downloadResult.fileName} uploaded: ${uploadResult.url}`);
+          } else {
+            console.log(`❌ [FILE UPLOAD] Failed to upload ${downloadResult.fileName}: ${uploadResult.error}`);
+          }
+        } else {
+          this.logger.error(`❌ Failed to download ${fileName}: ${downloadResult.error}`);
+        }
+      } else {
+        this.logger.warn(`⚠️ Could not find file: ${fileName} in any expected location`);
+        this.logger.info(`🔍 Searched paths:`, possiblePaths);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Error downloading file ${fileName}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Upload file to external file manager and get shareable URL
+   */
+  async uploadFileToFileManager(filePath, fileName, sessionId) {
+    try {
+      // Import form-data dynamically since we're using ES modules
+      const FormData = (await import('form-data')).default;
+      const fetch = (await import('node-fetch')).default;
+      
+      const form = new FormData();
+      
+      // Create a readable stream from the file
+      const fileStream = fs.createReadStream(filePath);
+      form.append('file', fileStream, fileName);
+      form.append('filepath', `browser_use_outputs/${sessionId}`);
+      
+      const response = await fetch('https://vanijapp.adya.ai/api/v1/vanij/gateway/file_manager/internal/upload', {
+        method: 'POST',
+        body: form,
+        headers: form.getHeaders()
+      });
+
+      console.log("UPLOADED RESPONSE========",response)
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.meta.status && result.data.url) {
+          this.logger.info(`🌐 File uploaded successfully: ${result.data.url}`);
+          
+          // AUTO-CLEANUP: Delete local file after successful upload
+          try {
+            fs.unlinkSync(filePath);
+            this.logger.info(`🗑️ Local file deleted after upload: ${fileName}`);
+            console.log(`🗑️ [FILE CLEANUP] ${fileName} deleted from downloads folder after successful upload`);
+          } catch (deleteError) {
+            this.logger.warn(`⚠️ Failed to delete local file after upload: ${deleteError.message}`);
+            console.log(`⚠️ [FILE CLEANUP] Failed to delete ${fileName}: ${deleteError.message}`);
+          }
+          
+          return {
+            success: true,
+            url: result.data.url,
+            size: result.data.size,
+            provider: result.data.provider
+          };
+        } else {
+          this.logger.error(`❌ Upload failed: ${result.meta.message || 'Unknown error'}`);
+          return { success: false, error: result.meta.message || 'Upload failed' };
+        }
+      } else {
+        this.logger.error(`❌ Upload request failed: ${response.status} ${response.statusText}`);
+        return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+      }
+    } catch (error) {
+      this.logger.error(`❌ Error uploading file: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Helper method to get basename without requiring path module
+   */
+  getBaseName(fullPath) {
+    return fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath;
+  }
+
+  /**
+   * Download file directly from full path (used for attachments)
+   */
+  async downloadFileFromFullPath(fullPath, executionId, sessionId) {
+    try {
+      const fileName = this.getBaseName(fullPath);
+      const downloadKey = `${executionId}_${sessionId}`;
+      
+      // Track this download in the pending downloads Map
+      if (!this.pendingDownloads.has(downloadKey)) {
+        this.pendingDownloads.set(downloadKey, []);
+      }
+
+      try {
+        // Import modules using dynamic import for ES module compatibility
+        const fsModule = await import('fs');
+        const pathModule = await import('path');
+        
+        // Check if file exists at the full path
+        if (fsModule.existsSync(fullPath)) {
+          const fileContent = fsModule.readFileSync(fullPath, 'utf8');
+          
+          this.logger.info(`📁 Found attachment file at: ${fullPath}`);
+          
+          // Download the file to our downloads folder
+          const downloadResult = await this.downloadFile(fileName, fileContent, sessionId);
+          
+          if (downloadResult.success) {
+            this.logger.info(`📥 Successfully downloaded attachment: ${fileName}`);
+            this.logger.info(`📂 Downloaded to: ${downloadResult.filePath}`);
+
+            // Upload to file manager and get shareable URL - WAIT for completion
+            const uploadResult = await this.uploadFileToFileManager(
+              downloadResult.filePath, 
+              downloadResult.fileName, 
+              sessionId
+            );
+
+            // Track uploaded file IMMEDIATELY for result inclusion
+            if (uploadResult.success) {
+              const uploadedFilesKey = `${executionId}_${sessionId}`;
+              if (!this.uploadedFiles.has(uploadedFilesKey)) {
+                this.uploadedFiles.set(uploadedFilesKey, []);
+              }
+              
+              // Add the uploaded file info to tracking SYNCHRONOUSLY
+              this.uploadedFiles.get(uploadedFilesKey).push({
+                id: uploadResult.url.split('/').pop().split('.')[0], // Extract file ID from URL
+                fileName: downloadResult.fileName,
+                url: uploadResult.url,
+                size: uploadResult.size,
+                provider: uploadResult.provider,
+                uploadedAt: new Date().toISOString(),
+                localPath: downloadResult.filePath
+              });
+
+              this.logger.info(`📋 IMMEDIATELY tracked uploaded file: ${fileName} -> ${uploadResult.url}`);
+              console.log(`📋 [FILE TRACKING] ${fileName} IMMEDIATELY tracked for inclusion in API result`);
+            }
+
+            // Emit download event with upload result (this now happens after tracking)
+            this.emit("fileDownloaded", {
+              executionId,
+              sessionId,
+              fileName: downloadResult.fileName,
+              filePath: downloadResult.filePath,
+              relativePath: downloadResult.relativePath,
+              size: downloadResult.size,
+              originalPath: fullPath,
+              timestamp: downloadResult.timestamp,
+              type: 'attachment',
+              uploadResult: uploadResult.success ? {
+                url: uploadResult.url,
+                size: uploadResult.size,
+                provider: uploadResult.provider
+              } : null,
+              uploadError: uploadResult.success ? null : uploadResult.error
+            });
+
+            // Log success for user visibility
+            console.log(`📥 [ATTACHMENT DOWNLOAD] ${downloadResult.fileName} saved to downloads folder`);
+            console.log(`📂 [ATTACHMENT DOWNLOAD] Path: ${downloadResult.relativePath}`);
+            
+            if (uploadResult.success) {
+              console.log(`🌐 [FILE UPLOAD] ${downloadResult.fileName} uploaded: ${uploadResult.url}`);
+            } else {
+              console.log(`❌ [FILE UPLOAD] Failed to upload ${downloadResult.fileName}: ${uploadResult.error}`);
+            }
+          } else {
+            this.logger.error(`❌ Failed to download attachment ${fileName}: ${downloadResult.error}`);
+          }
+        } else {
+          this.logger.warn(`⚠️ Attachment file not found at: ${fullPath}`);
+        }
+      } catch (innerError) {
+        this.logger.error(`❌ Error processing attachment ${fileName}: ${innerError.message}`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Error downloading attachment from ${fullPath}: ${error.message}`);
     }
   }
 
@@ -1069,13 +1638,38 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Parse token usage from the output
     const tokenUsage = this.parseTokenUsage(stdout, executionId);
 
+    // Get uploaded files for this execution
+    const uploadedFilesKey = `${executionId}_${sessionId}`;
+    const uploadedFiles = this.uploadedFiles.get(uploadedFilesKey) || [];
+    const outputFiles = uploadedFiles.map(file => ({
+      id: file.id,
+      fileName: file.fileName,
+      url: file.url
+    }));
+
+    // Debug logging for file tracking
+    this.logger.info(`🔍 Parsing agent result for ${executionId}`, {
+      stdoutLength: stdout.length,
+      hasJsonResult: !!resultJson,
+      uploadedFilesKey,
+      uploadedFilesCount: uploadedFiles.length,
+      outputFilesCount: outputFiles.length,
+      uploadedFilesKeys: Array.from(this.uploadedFiles.keys())
+    });
+
+    if (outputFiles.length > 0) {
+      this.logger.info(`📋 Found ${outputFiles.length} output files for result:`, outputFiles);
+    } else {
+      this.logger.warn(`⚠️ No output files found for ${uploadedFilesKey}. Available keys:`, Array.from(this.uploadedFiles.keys()));
+    }
+
     if (resultJson) {
       const result = JSON.parse(resultJson);
 
       // Generate live URL for this session
       const liveUrl = `${process.env.BASE_URL || "http://localhost:3000"}/api/live/${sessionId}`;
 
-      // Enhance result with execution metadata, token usage, and live URL
+      // Enhance result with execution metadata, token usage, live URL, and output files
       return {
         ...result,
         execution_id: executionId,
@@ -1087,6 +1681,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         token_usage: tokenUsage,
         live_url: liveUrl,
         live_url_embed: `<iframe src="${liveUrl}" width="100%" height="600px"></iframe>`,
+        outputFiles: outputFiles
       };
     } else {
       // If no JSON result found, but the process completed successfully (code 0),
@@ -1129,6 +1724,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         live_url_embed: `<iframe src="${liveUrl}" width="100%" height="600px"></iframe>`,
         stdout: stdout.substring(0, 1000), // Include first 1000 chars of stdout for debugging
         note: "Result created from successful process completion without JSON output",
+        outputFiles: outputFiles
       };
     }
   }
@@ -1562,6 +2158,17 @@ export class BrowserUseIntegrationService extends EventEmitter {
     this.tokenUsageHistory = [];
     this.totalTokenCost = 0;
     this.logger.info("🗑️ Token usage history cleared");
+  }
+
+  /**
+   * Clean up uploaded files data for completed tasks
+   */
+  cleanupUploadedFilesData(executionId, sessionId) {
+    const key = `${executionId}_${sessionId}`;
+    if (this.uploadedFiles.has(key)) {
+      this.uploadedFiles.delete(key);
+      this.logger.info(`🧹 Cleaned up uploaded files data for ${key}`);
+    }
   }
 
   // ===== TASK TRACKING METHODS =====
