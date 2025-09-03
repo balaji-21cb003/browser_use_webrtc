@@ -150,9 +150,9 @@ export function createBrowserUseRoutes(
         sessionId: session.id,
         session_reused: sessionReused,
         live_url: websocketStreamingUrl,
-        message: sessionReused
-          ? `Task started using existing session! Browser streaming available at: ${websocketStreamingUrl}`
-          : `Task started! Browser streaming available at: ${websocketStreamingUrl}`,
+        // // message: sessionReused
+        //   ? `Task started using existing session! Browser streaming available at: ${websocketStreamingUrl}`
+        //   : `Task started! Browser streaming available at: ${websocketStreamingUrl}`,
       });
 
       console.log("============CREATING TASK");
