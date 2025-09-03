@@ -252,7 +252,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         useExistingBrowser,
         disableHighlighting, // NEW: Log highlighting setting
         llmConfigFromAPI: !!llmConfig, // Log if LLM config came from API
-        hasApiKey: !!(llmConfig?.apiKey),
+        hasApiKey: !!llmConfig?.apiKey,
       },
     );
 
@@ -370,18 +370,28 @@ export class BrowserUseIntegrationService extends EventEmitter {
         ...process.env,
 
         // Azure OpenAI configuration - use API request values if available
-        AZURE_OPENAI_API_KEY: llmConfig?.apiKey || process.env.AZURE_OPENAI_API_KEY,
-        AZURE_OPENAI_ENDPOINT: llmConfig?.endpoint || process.env.AZURE_OPENAI_ENDPOINT,
-        AZURE_OPENAI_DEPLOYMENT_NAME: llmConfig?.deployment || process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-        AZURE_OPENAI_API_VERSION: llmConfig?.apiVersion || process.env.AZURE_OPENAI_API_VERSION,
+        AZURE_OPENAI_API_KEY:
+          llmConfig?.apiKey || process.env.AZURE_OPENAI_API_KEY,
+        AZURE_OPENAI_ENDPOINT:
+          llmConfig?.endpoint || process.env.AZURE_OPENAI_ENDPOINT,
+        AZURE_OPENAI_DEPLOYMENT_NAME:
+          llmConfig?.deployment || process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
+        AZURE_OPENAI_API_VERSION:
+          llmConfig?.apiVersion || process.env.AZURE_OPENAI_API_VERSION,
 
         // Alternative LLM providers - use API request values if available
-        OPENAI_API_KEY: llmConfig?.provider === 'openai' ? llmConfig?.apiKey : process.env.OPENAI_API_KEY,
-        GOOGLE_API_KEY: llmConfig?.provider === 'google' ? llmConfig?.apiKey : process.env.GOOGLE_API_KEY,
+        OPENAI_API_KEY:
+          llmConfig?.provider === "openai"
+            ? llmConfig?.apiKey
+            : process.env.OPENAI_API_KEY,
+        GOOGLE_API_KEY:
+          llmConfig?.provider === "google"
+            ? llmConfig?.apiKey
+            : process.env.GOOGLE_API_KEY,
 
         // LLM provider preference - use API request value if available
         LLM_PROVIDER: llmConfig?.provider || llmProvider,
-        LLM_MODEL: llmConfig?.model || 'gpt-4.1',
+        LLM_MODEL: llmConfig?.model || "gpt-4.1",
 
         // Browser configuration for automation
         BROWSER_HEADLESS: process.env.BROWSER_HEADLESS || "false",
@@ -442,7 +452,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         hasGoogleKey: !!env.GOOGLE_API_KEY,
         azureEndpoint: env.AZURE_OPENAI_ENDPOINT,
         azureDeployment: env.AZURE_OPENAI_DEPLOYMENT_NAME,
-        configSource: llmConfig ? 'API_REQUEST' : 'ENVIRONMENT_VARIABLES'
+        configSource: llmConfig ? "API_REQUEST" : "ENVIRONMENT_VARIABLES",
       });
 
       const agentProcess = spawn(this.pythonPath, args, {
@@ -639,6 +649,23 @@ export class BrowserUseIntegrationService extends EventEmitter {
               result: enhancedResult,
             });
 
+            // Update task status to completed
+            const taskInfo = this.findTaskByExecutionId(executionId);
+            if (taskInfo) {
+              taskInfo.status = "completed";
+              taskInfo.completedAt = new Date().toISOString();
+              taskInfo.result = enhancedResult;
+
+              this.logger.info(
+                `✅ Task ${taskInfo.taskId} marked as completed`,
+                {
+                  executionId,
+                  sessionId,
+                  status: taskInfo.status,
+                },
+              );
+            }
+
             resolve(enhancedResult);
           } catch (parseError) {
             const errorResult = this.createErrorResult(
@@ -663,6 +690,21 @@ export class BrowserUseIntegrationService extends EventEmitter {
               sessionId,
               error: enhancedErrorResult,
             });
+
+            // Update task status to failed
+            const taskInfo = this.findTaskByExecutionId(executionId);
+            if (taskInfo) {
+              taskInfo.status = "failed";
+              taskInfo.completedAt = new Date().toISOString();
+              taskInfo.result = enhancedErrorResult;
+
+              this.logger.info(`❌ Task ${taskInfo.taskId} marked as failed`, {
+                executionId,
+                sessionId,
+                status: taskInfo.status,
+              });
+            }
+
             reject(enhancedErrorResult);
           }
         } else {
@@ -705,6 +747,25 @@ export class BrowserUseIntegrationService extends EventEmitter {
             sessionId,
             error: enhancedErrorResult,
           });
+
+          // Update task status to failed
+          const failedTaskInfo = this.findTaskByExecutionId(executionId);
+          if (failedTaskInfo) {
+            failedTaskInfo.status = "failed";
+            failedTaskInfo.completedAt = new Date().toISOString();
+            failedTaskInfo.result = enhancedErrorResult;
+
+            this.logger.info(
+              `❌ Task ${failedTaskInfo.taskId} marked as failed`,
+              {
+                executionId,
+                sessionId,
+                status: failedTaskInfo.status,
+                exitCode: code,
+              },
+            );
+          }
+
           reject(enhancedErrorResult);
         }
       });
