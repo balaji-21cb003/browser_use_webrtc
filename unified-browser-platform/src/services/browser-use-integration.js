@@ -238,6 +238,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
       llmProvider = "azure",
       useExistingBrowser = true, // New option to use existing streaming browser
       disableHighlighting = true, // NEW: Disable orange automation indicators
+      llmConfig = null, // NEW: LLM configuration from API request
     } = options;
 
     this.logger.info(
@@ -247,9 +248,11 @@ export class BrowserUseIntegrationService extends EventEmitter {
         maxSteps,
         browserContextId,
         priority,
-        llmProvider,
+        llmProvider: llmConfig?.provider || llmProvider,
         useExistingBrowser,
         disableHighlighting, // NEW: Log highlighting setting
+        llmConfigFromAPI: !!llmConfig, // Log if LLM config came from API
+        hasApiKey: !!(llmConfig?.apiKey),
       },
     );
 
@@ -366,18 +369,19 @@ export class BrowserUseIntegrationService extends EventEmitter {
       const env = {
         ...process.env,
 
-        // Azure OpenAI configuration
-        AZURE_OPENAI_API_KEY: process.env.AZURE_OPENAI_API_KEY,
-        AZURE_OPENAI_ENDPOINT: process.env.AZURE_OPENAI_ENDPOINT,
-        AZURE_OPENAI_DEPLOYMENT_NAME: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-        AZURE_OPENAI_API_VERSION: process.env.AZURE_OPENAI_API_VERSION,
+        // Azure OpenAI configuration - use API request values if available
+        AZURE_OPENAI_API_KEY: llmConfig?.apiKey || process.env.AZURE_OPENAI_API_KEY,
+        AZURE_OPENAI_ENDPOINT: llmConfig?.endpoint || process.env.AZURE_OPENAI_ENDPOINT,
+        AZURE_OPENAI_DEPLOYMENT_NAME: llmConfig?.deployment || process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
+        AZURE_OPENAI_API_VERSION: llmConfig?.apiVersion || process.env.AZURE_OPENAI_API_VERSION,
 
-        // Alternative LLM providers
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-        GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
+        // Alternative LLM providers - use API request values if available
+        OPENAI_API_KEY: llmConfig?.provider === 'openai' ? llmConfig?.apiKey : process.env.OPENAI_API_KEY,
+        GOOGLE_API_KEY: llmConfig?.provider === 'google' ? llmConfig?.apiKey : process.env.GOOGLE_API_KEY,
 
-        // LLM provider preference
-        LLM_PROVIDER: llmProvider,
+        // LLM provider preference - use API request value if available
+        LLM_PROVIDER: llmConfig?.provider || llmProvider,
+        LLM_MODEL: llmConfig?.model || 'gpt-4.1',
 
         // Browser configuration for automation
         BROWSER_HEADLESS: process.env.BROWSER_HEADLESS || "false",
@@ -427,6 +431,18 @@ export class BrowserUseIntegrationService extends EventEmitter {
             key.includes("LLM") ||
             key.includes("PYTHON"),
         ),
+      });
+
+      // TESTING: Print LLM configuration details
+      console.log("🔑 [TESTING] LLM Configuration passed to Python:", {
+        provider: env.LLM_PROVIDER,
+        model: env.LLM_MODEL,
+        hasAzureKey: !!env.AZURE_OPENAI_API_KEY,
+        hasOpenAIKey: !!env.OPENAI_API_KEY,
+        hasGoogleKey: !!env.GOOGLE_API_KEY,
+        azureEndpoint: env.AZURE_OPENAI_ENDPOINT,
+        azureDeployment: env.AZURE_OPENAI_DEPLOYMENT_NAME,
+        configSource: llmConfig ? 'API_REQUEST' : 'ENVIRONMENT_VARIABLES'
       });
 
       const agentProcess = spawn(this.pythonPath, args, {

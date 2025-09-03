@@ -40,6 +40,15 @@ export function createBrowserUseRoutes(
 
       const { task, options = {} } = req.body;
 
+      // Extract LLM configuration from options
+      const llmConfig = extractLLMConfig(options);
+      logger.info(`🔑 LLM configuration extracted:`, {
+        provider: llmConfig.provider,
+        model: llmConfig.model,
+        hasApiKey: !!llmConfig.apiKey,
+        apiKeyPrefix: llmConfig.apiKey ? `${llmConfig.apiKey.substring(0, 8)}...` : 'none'
+      });
+
       if (!task) {
         return res.status(400).json({ error: "task is required" });
       }
@@ -127,6 +136,7 @@ export function createBrowserUseRoutes(
           taskId,
           {
             ...options,
+            llmConfig: llmConfig, // Pass extracted LLM configuration
             browserService: browserService, // Pass browser service for CDP endpoint
             io: io, // Pass io instance for video streaming
           },
@@ -1031,4 +1041,53 @@ function generateExecutionSummary(taskId, service) {
     steps: steps,
     summary: `Execution completed with ${steps.length} recorded steps`,
   };
+}
+
+/**
+ * Extract LLM configuration from API request options
+ */
+function extractLLMConfig(options) {
+  const llmConfig = {
+    provider: 'azure', // default
+    model: 'gpt-4.1', // default
+    apiKey: null,
+    endpoint: null,
+    deployment: null,
+    apiVersion: null
+  };
+
+  // Handle nested options structure
+  const opts = options.options || options;
+
+  // Extract provider preference
+  if (opts.llmProvider) {
+    llmConfig.provider = opts.llmProvider.toLowerCase();
+  } else if (opts.provider) {
+    llmConfig.provider = opts.provider.toLowerCase();
+  }
+
+  // Extract model
+  if (opts.llmModel) {
+    llmConfig.model = opts.llmModel;
+  } else if (opts.model) {
+    llmConfig.model = opts.model;
+  }
+
+  // Extract API credentials based on provider
+  if (llmConfig.provider === 'azure' || llmConfig.provider === 'openai') {
+    // Azure OpenAI or OpenAI
+    llmConfig.apiKey = opts.apiKey || opts.openaiApiKey || opts.azureApiKey || opts.key;
+    llmConfig.endpoint = opts.endpoint || opts.azureEndpoint;
+    llmConfig.deployment = opts.deployment || opts.azureDeployment || llmConfig.model;
+    llmConfig.apiVersion = opts.apiVersion || opts.azureApiVersion || '2024-08-01-preview';
+  } else if (llmConfig.provider === 'google') {
+    // Google AI
+    llmConfig.apiKey = opts.apiKey || opts.googleApiKey || opts.key;
+  } else {
+    // Generic/unknown provider
+    llmConfig.apiKey = opts.apiKey || opts.key;
+    llmConfig.endpoint = opts.endpoint;
+  }
+
+  return llmConfig;
 }
