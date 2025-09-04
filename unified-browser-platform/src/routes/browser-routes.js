@@ -121,5 +121,17 @@ export function createBrowserRoutes(browserService, sessionManager, logger) {
     }
   });
 
+  // Reset mouse state for a session (useful for debugging stuck mouse states)
+  router.post("/sessions/:sessionId/reset-mouse", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const result = await browserService.resetMouseState(sessionId);
+      res.json(result);
+    } catch (error) {
+      logger.error("Failed to reset mouse state:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return router;
 }

@@ -118,6 +118,27 @@ class UnifiedBrowserPlatform {
     );
   }
 
+  getMouseStatesSummary() {
+    try {
+      const summary = {
+        totalSessions: this.browserService.sessions.size,
+        sessionsWithMouseState: 0,
+        totalPressedButtons: 0,
+      };
+
+      for (const [sessionId, session] of this.browserService.sessions) {
+        if (session.mouseButtonState && session.mouseButtonState.size > 0) {
+          summary.sessionsWithMouseState++;
+          summary.totalPressedButtons += session.mouseButtonState.size;
+        }
+      }
+
+      return summary;
+    } catch (error) {
+      return { error: "Failed to get mouse states summary" };
+    }
+  }
+
   async setupRoutes() {
     // Health check
     this.app.get("/health", (req, res) => {
@@ -130,6 +151,7 @@ class UnifiedBrowserPlatform {
           browserUse: this.browserUseService.isHealthy(),
           sessions: this.sessionManager.getActiveSessionsCount(),
         },
+        mouseStates: this.getMouseStatesSummary(),
       });
     });
 
@@ -582,6 +604,16 @@ class UnifiedBrowserPlatform {
               case "click":
                 // Use proper Puppeteer mouse methods for coordinate-based clicking
                 await browserSession.page.mouse.move(x, y);
+
+                // Ensure mouse button is in up state before clicking to prevent "already pressed" errors
+                try {
+                  await browserSession.page.mouse.up({
+                    button: button || "left",
+                  });
+                } catch (upError) {
+                  // Ignore errors if button wasn't down - this is just a safety measure
+                }
+
                 await browserSession.page.mouse.down({
                   button: button || "left",
                 });
@@ -590,6 +622,15 @@ class UnifiedBrowserPlatform {
                 });
                 break;
               case "mousedown":
+                // Ensure button is up first to prevent "already pressed" errors
+                try {
+                  await browserSession.page.mouse.up({
+                    button: button || "left",
+                  });
+                } catch (upError) {
+                  // Ignore errors if button wasn't down
+                }
+
                 await browserSession.page.mouse.down({
                   button: button || "left",
                 });

@@ -26,8 +26,32 @@ export class BrowserStreamingService extends EventEmitter {
 
   async initialize() {
     this.logger.info("🔧 Initializing Browser Streaming Service...");
+
+    // Start periodic mouse state cleanup to prevent stuck states
+    setInterval(() => {
+      this.cleanupMouseStates();
+    }, 60000); // Clean every 60 seconds
+
     this.isInitialized = true;
     this.logger.info("✅ Browser Streaming Service initialized");
+  }
+
+  // Clean up mouse states for all sessions
+  async cleanupMouseStates() {
+    try {
+      for (const [sessionId, session] of this.sessions) {
+        if (
+          session &&
+          session.mouseButtonState &&
+          session.mouseButtonState.size > 0
+        ) {
+          this.logger.debug(`🖱️ Cleaning mouse state for session ${sessionId}`);
+          await this.resetMouseState(sessionId);
+        }
+      }
+    } catch (error) {
+      this.logger.debug(`Mouse state cleanup error: ${error.message}`);
+    }
   }
 
   getSession(sessionId) {
@@ -41,39 +65,45 @@ export class BrowserStreamingService extends EventEmitter {
       );
 
       // Create a NEW browser instance for this session to enable true parallelism
-      // Force non-headless for CDP screencast to work properly
-      const forceHeadless = false;
+      // Use less restrictive configuration for better compatibility
+      const isProduction = process.env.NODE_ENV === "production";
       const browser = await puppeteer.launch({
-        headless: true, // HIDE BROWSER WINDOW - automation still works!
+        headless: isProduction ? true : false, // Allow non-headless in development
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
-          height: options.height || 1200, // Increased from 1080 to 1200 for better content viewing
+          height: options.height || 1200,
           deviceScaleFactor: 1,
         },
         args: [
           "--remote-debugging-port=0", // Use random port
+
+          // Essential server args (keep these)
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
-          "--disable-web-security",
+
+          // Less restrictive security (for better Instagram compatibility)
+          // "--disable-web-security", // REMOVED - can cause issues with Instagram
           "--disable-features=VizDisplayCompositor",
-          "--disable-gpu",
+
+          // GPU and rendering (minimal restrictions)
+          isProduction ? "--disable-gpu" : "", // Allow GPU in development
           "--use-gl=swiftshader",
-          // "--headless=new", // Removed for CDP screencast to work
-          "--hide-scrollbars",
-          "--mute-audio",
+
+          // Window management
           `--window-size=${options.width || 1920},${options.height || 1200}`,
           "--window-position=0,0",
           "--force-device-scale-factor=1",
+
+          // Performance optimizations (keep these)
           "--disable-background-timer-throttling",
           "--disable-backgrounding-occluded-windows",
           "--disable-renderer-backgrounding",
-          "--disable-extensions",
-          "--disable-default-apps",
-          "--disable-sync",
-          "--disable-translate",
-          "--disable-plugins",
+
+          // UI restrictions (minimal)
+          "--hide-scrollbars",
+          "--mute-audio",
           "--disable-notifications",
           "--disable-desktop-notifications",
           "--autoplay-policy=no-user-gesture-required",
@@ -81,14 +111,22 @@ export class BrowserStreamingService extends EventEmitter {
           "--no-default-browser-check",
           "--disable-hang-monitor",
           "--disable-prompt-on-repost",
-          "--disable-domain-reliability",
-          "--disable-client-side-phishing-detection",
-          "--start-maximized",
-          "--disable-infobars",
-          "--disable-popup-blocking",
+
+          // Reduce automation detection (but not completely hide)
           "--disable-blink-features=AutomationControlled",
           "--exclude-switches=enable-automation",
-        ],
+
+          // REMOVED RESTRICTIONS for better Instagram compatibility:
+          // "--disable-sync",
+          // "--disable-translate",
+          // "--disable-plugins",
+          // "--disable-extensions",
+          // "--disable-default-apps",
+          // "--disable-domain-reliability",
+          // "--disable-client-side-phishing-detection",
+          // "--disable-infobars",
+          // "--disable-popup-blocking",
+        ].filter((arg) => arg !== ""), // Remove empty args
       });
 
       // Create a new page for this session
@@ -102,13 +140,68 @@ export class BrowserStreamingService extends EventEmitter {
       };
 
       await page.setViewport(defaultViewport);
+
+      // Use a more recent and realistic user agent
       await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
       );
 
-      // Set extra headers to help with site compatibility
+      // Set realistic headers that match a normal browser
       await page.setExtraHTTPHeaders({
         "Accept-Language": "en-US,en;q=0.9",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua":
+          '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+      });
+
+      // Additional stealth measures for better Instagram compatibility
+      await page.evaluateOnNewDocument(() => {
+        // Remove webdriver property
+        Object.defineProperty(navigator, "webdriver", {
+          get: () => undefined,
+        });
+
+        // Override plugins array to look more realistic
+        Object.defineProperty(navigator, "plugins", {
+          get: () => [1, 2, 3, 4, 5],
+        });
+
+        // Override languages to be more realistic
+        Object.defineProperty(navigator, "languages", {
+          get: () => ["en-US", "en"],
+        });
+
+        // Make window.chrome look realistic
+        if (!window.chrome) {
+          window.chrome = {};
+        }
+        window.chrome.runtime = {
+          onConnect: null,
+          onMessage: null,
+        };
+
+        // Remove automation indicators
+        const originalQuery = window.document.querySelector;
+        window.document.querySelector = function (selector) {
+          if (
+            selector === "[automation-target]" ||
+            selector === ".browser-use-target" ||
+            selector === ".automation-highlight"
+          ) {
+            return null;
+          }
+          return originalQuery.call(document, selector);
+        };
       });
 
       // Navigate to initial page
@@ -822,6 +915,47 @@ export class BrowserStreamingService extends EventEmitter {
     }
   }
 
+  // New method to reset mouse state for a specific session
+  async resetMouseState(sessionId) {
+    try {
+      const session = this.getSession(sessionId);
+      if (!session) {
+        return { success: false, message: "Session not found" };
+      }
+
+      this.logger.info(`🖱️ Resetting mouse state for session ${sessionId}`);
+
+      // Clear tracked button state
+      if (session.mouseButtonState) {
+        session.mouseButtonState.clear();
+      } else {
+        session.mouseButtonState = new Set();
+      }
+
+      // Force release all mouse buttons to clear any stuck state
+      try {
+        await session.page.mouse.up({ button: "left" });
+        await session.page.mouse.up({ button: "right" });
+        await session.page.mouse.up({ button: "middle" });
+        this.logger.info(
+          `✅ Mouse state reset successfully for session ${sessionId}`,
+        );
+        return { success: true, message: "Mouse state reset successfully" };
+      } catch (error) {
+        this.logger.debug(
+          `Mouse reset attempted for session ${sessionId}: ${error.message}`,
+        );
+        return { success: true, message: "Mouse reset attempted" };
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to reset mouse state for session ${sessionId}:`,
+        error,
+      );
+      return { success: false, message: error.message };
+    }
+  }
+
   // New method to check and cleanup invalid sessions
   async cleanupInvalidSessions() {
     const sessionIds = Array.from(this.sessions.keys());
@@ -848,8 +982,20 @@ export class BrowserStreamingService extends EventEmitter {
     this.logger.info("✅ Browser Streaming Service cleaned up");
   }
 
+  // Get health status including mouse states
   isHealthy() {
-    return this.isInitialized;
+    try {
+      return {
+        initialized: this.isInitialized,
+        sessionCount: this.sessions.size,
+        mouseStatesActive: Array.from(this.sessions.values()).filter(
+          (session) =>
+            session.mouseButtonState && session.mouseButtonState.size > 0,
+        ).length,
+      };
+    } catch (error) {
+      return { error: error.message };
+    }
   }
 
   getActiveSessions() {
@@ -2159,149 +2305,23 @@ export class BrowserStreamingService extends EventEmitter {
   async injectAutomationMarkers(page) {
     try {
       await page.evaluate(() => {
-        let activityCount = 0;
-
-        // **ENHANCED: Set browser-use automation markers for tab detection**
-        window.browserUseActive = true;
-        window.automationInProgress = true;
-        window.lastInteractionTime = Date.now();
-        window.lastDomModification = Date.now();
-        window.searchActivity = false;
-        window.formActivity = false;
-
-        // Only set up event listeners if not already done
-        if (!window.browserUseMarkersInjected) {
-          window.browserUseMarkersInjected = true;
-
-          const events = [
-            "click",
-            "keydown",
-            "scroll",
-            "mousemove",
-            "focus",
-            "mousedown",
-            "input",
-            "change",
-            "submit",
-          ];
-
-          events.forEach((eventType) => {
-            document.addEventListener(
-              eventType,
-              (event) => {
-                activityCount++;
-                window._tabActivity = activityCount;
-                window._lastActivity = Date.now();
-
-                // **ENHANCED: Update automation markers on any interaction**
-                window.lastInteractionTime = Date.now();
-                window.automationInProgress = true;
-
-                // **ENHANCED: Track specific activity types**
-                if (["input", "change"].includes(eventType)) {
-                  window.formActivity = true;
-                  window.lastDomModification = Date.now();
-
-                  // Check if this is search-related
-                  const target = event.target;
-                  if (
-                    target &&
-                    (target.name?.includes("search") ||
-                      target.id?.includes("search") ||
-                      target.placeholder?.toLowerCase().includes("search") ||
-                      target.className?.includes("search"))
-                  ) {
-                    window.searchActivity = true;
-                    window.lastSearchTime = Date.now();
-                  }
-                }
-
-                // Mark automation activity for form interactions (like RedBus booking)
-                if (
-                  ["click", "input", "change", "submit"].includes(eventType)
-                ) {
-                  window.lastDomModification = Date.now();
-
-                  // Add automation markers to the target element
-                  if (event.target) {
-                    event.target.setAttribute("data-browser-use", "active");
-                    event.target.classList.add("browser-use-target");
-                  }
-                }
-              },
-              { passive: true },
-            );
-          });
-
-          // **ENHANCED: Monitor DOM changes for automation detection**
-          const observer = new MutationObserver((mutations) => {
-            if (mutations.length > 0) {
-              window.lastDomModification = Date.now();
-              window.automationInProgress = true;
-
-              // Check for search results or navigation changes
-              const hasSearchResults = document.querySelector(
-                '[data-testid*="search"], .search-results, #search-results',
-              );
-              if (hasSearchResults) {
-                window.searchActivity = true;
-                window.lastSearchTime = Date.now();
-              }
-            }
-          });
-
-          if (document.body) {
-            observer.observe(document.body, {
-              childList: true,
-              subtree: true,
-              attributes: true,
-              attributeFilter: ["value", "checked", "selected"],
-            });
-          }
-
-          // Track page visibility changes
-          document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) {
-              window._tabActivity = (window._tabActivity || 0) + 10;
-              window._lastActivity = Date.now();
-              window.lastInteractionTime = Date.now();
-            }
-          });
-
-          // **ENHANCED: Keep automation markers fresh with better logic**
-          setInterval(() => {
-            // Mark this tab as having browser-use automation
-            window.browserUseActive = true;
-
-            // If no recent activity, reduce automation signals
-            const timeSinceLastActivity =
-              Date.now() - (window.lastInteractionTime || 0);
-            if (timeSinceLastActivity > 10000) {
-              // Reduced from 30 seconds to 10
-              window.automationInProgress = false;
-              window.formActivity = false;
-            }
-
-            // Reset search activity after 5 seconds
-            const timeSinceSearch = Date.now() - (window.lastSearchTime || 0);
-            if (timeSinceSearch > 5000) {
-              window.searchActivity = false;
-            }
-          }, 1000);
+        if (!window._browserUse) {
+          window._browserUse = {
+            active: true,
+            startTime: Date.now(),
+            lastActivity: Date.now(),
+          };
         }
       });
 
-      // Also set up for future navigations
       await page.evaluateOnNewDocument(() => {
-        // This will run on every new document load
-        setTimeout(() => {
-          if (!window.browserUseMarkersInjected) {
-            window.browserUseActive = true;
-            window.automationInProgress = true;
-            window.lastInteractionTime = Date.now();
-            window.lastDomModification = Date.now();
-          }
-        }, 100);
+        if (!window._browserUse) {
+          window._browserUse = {
+            active: true,
+            startTime: Date.now(),
+            lastActivity: Date.now(),
+          };
+        }
       });
     } catch (error) {
       // Ignore injection errors (page might be closed, etc.)
