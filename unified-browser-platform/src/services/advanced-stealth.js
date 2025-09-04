@@ -42,25 +42,29 @@ export class AdvancedStealthService {
    */
   generateUserAgentPool() {
     return [
-      // Chrome on Windows 11
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+      // Latest Chrome on Windows 11 (most common)
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 
-      // Chrome on macOS
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+      // Chrome on macOS (popular among users)
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 
-      // Chrome on Linux (for server environments)
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+      // Chrome on Android (mobile users)
+      "Mozilla/5.0 (Linux; Android 14; SM-G998U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
 
-      // Firefox alternatives
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0",
+      // Safari on macOS and iOS (authentic Apple users)
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
 
-      // Edge alternatives
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+      // Firefox (genuine alternative browser users)
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:118.0) Gecko/20100101 Firefox/118.0",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:118.0) Gecko/20100101 Firefox/118.0",
+
+      // Edge (Microsoft users)
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0",
     ];
   }
 
@@ -244,6 +248,393 @@ export class AdvancedStealthService {
 
     // Randomly include/exclude fonts to create unique fingerprints
     return commonFonts.filter(() => Math.random() > 0.1);
+  }
+
+  /**
+   * Advanced anti-detection measures for universal site bypassing
+   */
+  async applyAdvancedAntiDetection(page) {
+    try {
+      this.logger.info("🛡️ Applying advanced anti-detection measures...");
+
+      // Override automation detection properties
+      await page.evaluateOnNewDocument(() => {
+        // Remove webdriver property
+        Object.defineProperty(navigator, "webdriver", {
+          get: () => undefined,
+        });
+
+        // Override plugin detection
+        Object.defineProperty(navigator, "plugins", {
+          get: () => [
+            {
+              0: {
+                type: "application/x-google-chrome-pdf",
+                suffixes: "pdf",
+                description: "Portable Document Format",
+                enabledPlugin: {},
+              },
+              description: "Portable Document Format",
+              filename: "internal-pdf-viewer",
+              length: 1,
+              name: "Chrome PDF Plugin",
+            },
+            {
+              0: {
+                type: "application/pdf",
+                suffixes: "pdf",
+                description: "Portable Document Format",
+                enabledPlugin: {},
+              },
+              description: "Portable Document Format",
+              filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+              length: 1,
+              name: "Chrome PDF Viewer",
+            },
+            {
+              0: {
+                type: "application/x-nacl",
+                suffixes: "",
+                description: "Native Client Executable",
+                enabledPlugin: {},
+              },
+              1: {
+                type: "application/x-pnacl",
+                suffixes: "",
+                description: "Portable Native Client Executable",
+                enabledPlugin: {},
+              },
+              description: "Native Client",
+              filename: "internal-nacl-plugin",
+              length: 2,
+              name: "Native Client",
+            },
+          ],
+        });
+
+        // Override languages to appear more natural
+        Object.defineProperty(navigator, "languages", {
+          get: () => ["en-US", "en", "es", "fr"],
+        });
+
+        // Override permissions API
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => {
+          if (parameters.name === "notifications") {
+            return Promise.resolve({ state: "granted" });
+          }
+          return originalQuery(parameters);
+        };
+
+        // Mock battery API to appear more natural
+        Object.defineProperty(navigator, "getBattery", {
+          get: () => () =>
+            Promise.resolve({
+              charging: true,
+              chargingTime: 0,
+              dischargingTime: Infinity,
+              level: 0.8 + Math.random() * 0.2,
+            }),
+        });
+
+        // Override hardwareConcurrency with realistic values
+        Object.defineProperty(navigator, "hardwareConcurrency", {
+          get: () => [4, 8, 12, 16][Math.floor(Math.random() * 4)],
+        });
+
+        // Mock realistic connection info
+        Object.defineProperty(navigator, "connection", {
+          get: () => ({
+            effectiveType: "4g",
+            rtt: 50 + Math.random() * 100,
+            downlink: 5 + Math.random() * 10,
+            saveData: false,
+          }),
+        });
+
+        // Override chrome runtime to hide automation
+        if (window.chrome && window.chrome.runtime) {
+          Object.defineProperty(window.chrome.runtime, "onConnect", {
+            get: () => undefined,
+          });
+        }
+
+        // Add realistic iframe behavior
+        const originalCreateElement = document.createElement;
+        document.createElement = function (tagName) {
+          const element = originalCreateElement.call(this, tagName);
+          if (tagName.toLowerCase() === "iframe") {
+            element.style.display = "none";
+          }
+          return element;
+        };
+
+        // Mock realistic WebRTC behavior
+        if (window.RTCPeerConnection) {
+          const originalRTC = window.RTCPeerConnection;
+          window.RTCPeerConnection = function (...args) {
+            const pc = new originalRTC(...args);
+
+            // Mock realistic ICE candidates
+            const originalCreateOffer = pc.createOffer;
+            pc.createOffer = function (...args) {
+              return originalCreateOffer.apply(this, args).then((offer) => {
+                // Add realistic timing
+                return new Promise((resolve) => {
+                  setTimeout(() => resolve(offer), 50 + Math.random() * 100);
+                });
+              });
+            };
+
+            return pc;
+          };
+        }
+
+        // Override toString methods to hide proxy behavior
+        Function.prototype.toString = new Proxy(Function.prototype.toString, {
+          apply: function (target, thisArg, argumentsList) {
+            if (thisArg && thisArg.name && thisArg.name.includes("bound")) {
+              return "function() { [native code] }";
+            }
+            return target.apply(thisArg, argumentsList);
+          },
+        });
+      });
+
+      // Apply realistic timing delays
+      await this.addRealisticDelays(page);
+
+      // Add mouse movement simulation
+      await this.simulateHumanBehavior(page);
+
+      // Disable automation flags
+      await this.disableAutomationFlags(page);
+
+      this.logger.info(
+        "✅ Advanced anti-detection measures applied successfully",
+      );
+    } catch (error) {
+      this.logger.error("❌ Failed to apply anti-detection measures:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add realistic timing delays to mimic human behavior
+   */
+  async addRealisticDelays(page) {
+    await page.evaluateOnNewDocument(() => {
+      // Override setTimeout to add slight randomness
+      const originalSetTimeout = window.setTimeout;
+      window.setTimeout = function (callback, delay) {
+        const randomDelay = delay + (Math.random() * 50 - 25); // ±25ms variance
+        return originalSetTimeout(callback, Math.max(0, randomDelay));
+      };
+
+      // Override setInterval with variance
+      const originalSetInterval = window.setInterval;
+      window.setInterval = function (callback, delay) {
+        const randomDelay = delay + (Math.random() * 100 - 50); // ±50ms variance
+        return originalSetInterval(callback, Math.max(1, randomDelay));
+      };
+    });
+  }
+
+  /**
+   * Simulate human-like mouse behavior
+   */
+  async simulateHumanBehavior(page) {
+    // Add subtle mouse movements periodically
+    await page.evaluateOnNewDocument(() => {
+      let mouseX = 0;
+      let mouseY = 0;
+
+      // Track mouse position
+      document.addEventListener("mousemove", (e) => {
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+      });
+
+      // Simulate micro-movements
+      setInterval(
+        () => {
+          if (Math.random() < 0.1) {
+            // 10% chance every interval
+            const deltaX = (Math.random() - 0.5) * 4; // ±2 pixels
+            const deltaY = (Math.random() - 0.5) * 4;
+
+            const event = new MouseEvent("mousemove", {
+              clientX: mouseX + deltaX,
+              clientY: mouseY + deltaY,
+              bubbles: true,
+            });
+            document.dispatchEvent(event);
+          }
+        },
+        2000 + Math.random() * 3000,
+      ); // Every 2-5 seconds
+    });
+  }
+
+  /**
+   * Disable automation-specific flags and properties
+   */
+  async disableAutomationFlags(page) {
+    await page.evaluateOnNewDocument(() => {
+      // Remove automation-related properties
+      delete window.chrome.app;
+      delete window.chrome.webstore;
+
+      // Override automation detection methods
+      if (window.outerHeight === 0) {
+        Object.defineProperty(window, "outerHeight", {
+          get: () => window.innerHeight,
+        });
+      }
+
+      if (window.outerWidth === 0) {
+        Object.defineProperty(window, "outerWidth", {
+          get: () => window.innerWidth,
+        });
+      }
+
+      // Mock realistic screen properties
+      Object.defineProperty(window.screen, "availTop", {
+        get: () => 0,
+      });
+
+      Object.defineProperty(window.screen, "availLeft", {
+        get: () => 0,
+      });
+
+      // Hide headless indicators
+      if (navigator.userAgent.includes("HeadlessChrome")) {
+        Object.defineProperty(navigator, "userAgent", {
+          get: () => navigator.userAgent.replace("HeadlessChrome", "Chrome"),
+        });
+      }
+    });
+  }
+
+  /**
+   * Handle CDP session recovery and prevent automation detection errors
+   */
+  async handleCDPSessionRecovery(page) {
+    try {
+      // Add error handling for CDP session issues
+      page.on("error", async (error) => {
+        if (error.message.includes("Session with given id not found")) {
+          this.logger.warn("🔄 CDP session lost, attempting recovery...");
+
+          // Attempt to recover by creating a new page context
+          try {
+            await page.evaluate(() => {
+              // Clear any automation detection flags
+              window.sessionStorage.clear();
+              window.localStorage.clear();
+
+              // Remove any automation markers
+              delete window.__webdriver;
+              delete window.webdriver;
+              delete window.chrome.runtime.onConnect;
+
+              // Reset page state
+              if (window.history && window.history.replaceState) {
+                window.history.replaceState(
+                  {},
+                  document.title,
+                  window.location.href,
+                );
+              }
+            });
+
+            this.logger.info("✅ CDP session recovery successful");
+          } catch (recoveryError) {
+            this.logger.error("❌ CDP session recovery failed:", recoveryError);
+          }
+        }
+      });
+
+      // Handle page crashes and disconnections
+      page.on("close", () => {
+        this.logger.warn("📄 Page closed unexpectedly");
+      });
+
+      page.on("disconnect", () => {
+        this.logger.warn("🔌 Page disconnected");
+      });
+
+      // Set up page error recovery
+      await page.evaluateOnNewDocument(() => {
+        // Override console methods to prevent detection through console patterns
+        const originalLog = console.log;
+        const originalWarn = console.warn;
+        const originalError = console.error;
+
+        console.log = (...args) => {
+          // Filter out automation-related logs
+          const message = args.join(" ");
+          if (
+            !message.includes("webdriver") &&
+            !message.includes("automation")
+          ) {
+            originalLog.apply(console, args);
+          }
+        };
+
+        console.warn = (...args) => {
+          const message = args.join(" ");
+          if (
+            !message.includes("webdriver") &&
+            !message.includes("automation")
+          ) {
+            originalWarn.apply(console, args);
+          }
+        };
+
+        console.error = (...args) => {
+          const message = args.join(" ");
+          if (
+            !message.includes("webdriver") &&
+            !message.includes("automation")
+          ) {
+            originalError.apply(console, args);
+          }
+        };
+
+        // Add window error handler
+        window.addEventListener("error", (event) => {
+          // Prevent automation detection through error patterns
+          if (event.error && event.error.message) {
+            const message = event.error.message;
+            if (
+              message.includes("webdriver") ||
+              message.includes("automation")
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              return false;
+            }
+          }
+        });
+
+        // Handle unhandled promise rejections
+        window.addEventListener("unhandledrejection", (event) => {
+          if (event.reason && event.reason.message) {
+            const message = event.reason.message;
+            if (
+              message.includes("webdriver") ||
+              message.includes("automation")
+            ) {
+              event.preventDefault();
+              return false;
+            }
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error("❌ Failed to set up CDP session recovery:", error);
+    }
   }
 
   /**
@@ -682,6 +1073,12 @@ export class AdvancedStealthService {
 
       // Set realistic geolocation (disabled by default)
       await page.setGeolocation({ latitude: 0, longitude: 0, accuracy: 100 });
+
+      // Apply our advanced anti-detection measures for universal site bypassing
+      await this.applyAdvancedAntiDetection(page);
+
+      // Set up CDP session recovery to prevent automation detection errors
+      await this.handleCDPSessionRecovery(page);
 
       this.logger.info(
         `✅ Advanced stealth measures applied for session ${sessionId}${platform ? ` (${platform})` : ""}`,

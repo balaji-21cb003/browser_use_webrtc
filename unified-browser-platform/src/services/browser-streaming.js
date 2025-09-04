@@ -9,6 +9,7 @@ import os from "os";
 import { Logger } from "../utils/logger.js";
 import OptimizedTabDetection from "./optimized-tab-detection.js";
 import AdvancedStealthService from "./advanced-stealth.js";
+import ProxyRotationService from "./proxy-rotation.js";
 
 export class BrowserStreamingService extends EventEmitter {
   constructor() {
@@ -23,6 +24,12 @@ export class BrowserStreamingService extends EventEmitter {
     // Initialize advanced stealth service
     this.stealthService = new AdvancedStealthService(this.logger);
 
+    // Initialize proxy rotation service if enabled
+    this.proxyService =
+      process.env.ENABLE_PROXY_ROTATION === "true"
+        ? new ProxyRotationService()
+        : null;
+
     // Start periodic cache cleanup
     setInterval(() => {
       this.tabDetection.cleanupCache();
@@ -31,6 +38,16 @@ export class BrowserStreamingService extends EventEmitter {
 
   async initialize() {
     this.logger.info("🔧 Initializing Browser Streaming Service...");
+
+    // Initialize proxy service if enabled
+    if (this.proxyService) {
+      this.logger.info("🔄 Proxy rotation enabled");
+
+      if (process.env.PROXY_TEST_ON_STARTUP === "true") {
+        this.logger.info("🔍 Testing proxy connectivity...");
+        await this.proxyService.validateAllProxies();
+      }
+    }
 
     // Start periodic mouse state cleanup to prevent stuck states
     setInterval(() => {
@@ -83,13 +100,69 @@ export class BrowserStreamingService extends EventEmitter {
         `🖱️ Mouse state reset completed for session ${sessionId}`,
       );
     } catch (error) {
-      this.logger.debug(
-        `Mouse state reset failed for session ${sessionId}: ${error.message}`,
-      );
-      // Force clear our tracking state even if browser calls fail
-      if (session.mouseButtonState) {
-        session.mouseButtonState.clear();
+      this.logger.debug(`Mouse state reset error: ${error.message}`);
+    }
+  }
+
+  // Enhanced CDP session recovery and management
+  async setupCDPSessionRecovery(page, sessionId) {
+    try {
+      // Set up CDP session monitoring
+      const client = await page.target().createCDPSession();
+
+      // Monitor CDP session health
+      client.on("disconnected", async () => {
+        this.logger.warn(
+          `🔌 CDP session disconnected for ${sessionId}, attempting recovery...`,
+        );
+        await this.recoverCDPSession(sessionId);
+      });
+
+      // Set up page error monitoring
+      page.on("error", async (error) => {
+        if (error.message.includes("Session with given id not found")) {
+          this.logger.warn(
+            `🔄 CDP session lost for ${sessionId}, recovering...`,
+          );
+          await this.recoverCDPSession(sessionId);
+        }
+      });
+
+      // Store CDP client reference
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        session.cdpClient = client;
       }
+
+      this.logger.debug(`✅ CDP session recovery setup for ${sessionId}`);
+    } catch (error) {
+      this.logger.warn(
+        `⚠️ Could not setup CDP recovery for ${sessionId}: ${error.message}`,
+      );
+    }
+  }
+
+  // Recover CDP session
+  async recoverCDPSession(sessionId) {
+    try {
+      const session = this.sessions.get(sessionId);
+      if (!session || !session.page) return;
+
+      // Wait a bit before attempting recovery
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      // Try to create a new CDP session
+      const newClient = await session.page.target().createCDPSession();
+      session.cdpClient = newClient;
+
+      // Re-apply stealth measures after recovery
+      await this.stealthService.applyStealthMeasures(session.page, sessionId);
+
+      this.logger.info(`✅ CDP session recovered for ${sessionId}`);
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to recover CDP session for ${sessionId}: ${error.message}`,
+      );
     }
   }
 
@@ -103,115 +176,185 @@ export class BrowserStreamingService extends EventEmitter {
         `🔗 Creating streaming session ${sessionId} with SEPARATE browser for parallel execution`,
       );
 
+      // Get proxy for this session if rotation is enabled
+      let currentProxy = null;
+      if (this.proxyService) {
+        currentProxy = this.proxyService.getNextProxy(sessionId);
+        if (currentProxy) {
+          this.logger.info(
+            `🔄 Using proxy for session ${sessionId}: ${currentProxy.description} (${currentProxy.server})`,
+          );
+        }
+      }
+
       // Create a NEW browser instance for this session to enable true parallelism
       // Use less restrictive configuration for better compatibility
       const isProduction = process.env.NODE_ENV === "production";
       const protocolTimeout =
         parseInt(process.env.BROWSER_PROTOCOL_TIMEOUT) || 120000;
+
+      // Build browser args with proxy support
+      const browserArgs = [
+        "--remote-debugging-port=0", // Use random port
+
+        // Enhanced stealth arguments for anti-detection
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+
+        // Core anti-detection measures
+        "--disable-blink-features=AutomationControlled",
+        "--exclude-switches=enable-automation",
+        "--disable-client-side-phishing-detection",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-ipc-flooding-protection",
+        "--enable-features=NetworkService,NetworkServiceLogging",
+        "--force-color-profile=srgb",
+        "--metrics-recording-only",
+        "--no-crash-upload",
+        "--no-report-upload",
+        "--disable-breakpad",
+        "--disable-domain-reliability",
+        "--use-mock-keychain",
+
+        // Enhanced stealth for social media platforms
+        "--disable-features=VizDisplayCompositor,TranslateUI,BlinkGenPropertyTrees",
+        "--disable-sync",
+        "--disable-translate",
+        "--disable-default-apps",
+        "--disable-component-update",
+        "--disable-extensions-file-access-check",
+        "--disable-extensions-http-throttling",
+        "--disable-field-trial-config",
+        "--aggressive-cache-discard",
+        "--disable-back-forward-cache",
+
+        // Advanced automation detection bypassing
+        "--disable-blink-features=AutomationControlled",
+        "--exclude-switches=enable-automation",
+        "--disable-automation",
+        "--disable-logging",
+        "--disable-dev-shm-usage",
+        "--disable-setuid-sandbox",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-features=TranslateUI",
+        "--disable-ipc-flooding-protection",
+        "--no-service-autorun",
+        "--disable-client-side-phishing-detection",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-default-apps",
+        "--disable-extensions",
+        "--disable-extensions-file-access-check",
+        "--disable-hang-monitor",
+        "--disable-plugins",
+        "--disable-plugins-discovery",
+        "--disable-popup-blocking",
+        "--disable-prompt-on-repost",
+        "--disable-sync",
+        "--disable-translate",
+        "--no-crash-upload",
+        "--no-report-upload",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-features=VizDisplayCompositor",
+
+        // Window and rendering optimizations with consistent sizing
+        `--window-size=${options.width || parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) || 1920},${options.height || parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) || 1080}`,
+        "--window-position=0,0",
+        "--force-device-scale-factor=1",
+        "--enable-webgl",
+        "--enable-accelerated-2d-canvas",
+        "--enable-gpu-rasterization",
+        isProduction ? "--disable-gpu" : "--use-gl=desktop",
+
+        // Performance and background optimizations
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-networking",
+        "--disable-plugins-discovery",
+        "--disable-preconnect",
+        "--max_old_space_size=4096",
+
+        // UI and user experience
+        "--hide-scrollbars",
+        "--mute-audio",
+        "--disable-notifications",
+        "--disable-desktop-notifications",
+        "--disable-infobars",
+        "--disable-popup-blocking",
+        "--autoplay-policy=no-user-gesture-required",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-hang-monitor",
+        "--disable-prompt-on-repost",
+        "--disable-password-generation",
+        "--disable-password-manager-reauthentication",
+
+        // Network and security (balanced for compatibility)
+        "--allow-running-insecure-content",
+        "--disable-site-isolation-trials",
+
+        // Linux-specific optimizations for server environments
+        ...(os.platform() === "linux"
+          ? [
+              "--no-zygote",
+              "--disable-gpu-sandbox",
+              "--disable-software-rasterizer",
+            ]
+          : []),
+      ];
+
+      // Add proxy args if available
+      if (currentProxy) {
+        const proxyArgs = this.proxyService.getProxyArgs(currentProxy);
+        browserArgs.push(...proxyArgs);
+        this.logger.info(`🔗 Added proxy args: ${proxyArgs.join(" ")}`);
+      }
+
+      // Filter out empty args
+      const filteredArgs = browserArgs.filter((arg) => arg !== "");
+
       const browser = await puppeteer.launch({
         headless: process.env.BROWSER_HEADLESS, // Allow non-headless in development
         executablePath: process.env.CHROME_PATH || undefined,
         timeout: parseInt(process.env.BROWSER_LAUNCH_TIMEOUT) || 120000,
         protocolTimeout: protocolTimeout,
         defaultViewport: {
-          width: options.width || 1920,
-          height: options.height || 1200,
+          width:
+            options.width ||
+            parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) ||
+            1920,
+          height:
+            options.height ||
+            parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) ||
+            1080,
           deviceScaleFactor: 1,
         },
-        args: [
-          "--remote-debugging-port=0", // Use random port
-
-          // Enhanced stealth arguments for anti-detection
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-
-          // Core anti-detection measures
-          "--disable-blink-features=AutomationControlled",
-          "--exclude-switches=enable-automation",
-          "--disable-client-side-phishing-detection",
-          "--disable-component-extensions-with-background-pages",
-          "--disable-ipc-flooding-protection",
-          "--enable-features=NetworkService,NetworkServiceLogging",
-          "--force-color-profile=srgb",
-          "--metrics-recording-only",
-          "--no-crash-upload",
-          "--no-report-upload",
-          "--disable-breakpad",
-          "--disable-domain-reliability",
-          "--use-mock-keychain",
-
-          // Enhanced stealth for social media platforms
-          "--disable-features=VizDisplayCompositor,TranslateUI,BlinkGenPropertyTrees",
-          "--disable-sync",
-          "--disable-translate",
-          "--disable-default-apps",
-          "--disable-component-update",
-          "--disable-extensions-file-access-check",
-          "--disable-extensions-http-throttling",
-          "--disable-field-trial-config",
-          "--aggressive-cache-discard",
-          "--disable-back-forward-cache",
-
-          // Window and rendering optimizations
-          `--window-size=${options.width || 1920},${options.height || 1200}`,
-          "--window-position=0,0",
-          "--force-device-scale-factor=1",
-          "--enable-webgl",
-          "--enable-accelerated-2d-canvas",
-          "--enable-gpu-rasterization",
-          isProduction ? "--disable-gpu" : "--use-gl=desktop",
-
-          // Performance and background optimizations
-          "--disable-background-timer-throttling",
-          "--disable-backgrounding-occluded-windows",
-          "--disable-renderer-backgrounding",
-          "--disable-background-networking",
-          "--disable-plugins-discovery",
-          "--disable-preconnect",
-          "--max_old_space_size=4096",
-
-          // UI and user experience
-          "--hide-scrollbars",
-          "--mute-audio",
-          "--disable-notifications",
-          "--disable-desktop-notifications",
-          "--disable-infobars",
-          "--disable-popup-blocking",
-          "--autoplay-policy=no-user-gesture-required",
-          "--no-first-run",
-          "--no-default-browser-check",
-          "--disable-hang-monitor",
-          "--disable-prompt-on-repost",
-          "--disable-password-generation",
-          "--disable-password-manager-reauthentication",
-
-          // Network and security (balanced for compatibility)
-          "--allow-running-insecure-content",
-          "--disable-site-isolation-trials",
-
-          // Linux-specific optimizations for server environments
-          ...(os.platform() === "linux"
-            ? [
-                "--no-zygote",
-                "--disable-gpu-sandbox",
-                "--disable-software-rasterizer",
-              ]
-            : []),
-        ].filter((arg) => arg !== ""), // Remove empty args
+        args: filteredArgs,
       });
 
       // Create a new page for this session
       const page = await browser.newPage();
 
-      // Set up page configuration
-      const defaultViewport = {
-        width: options.width || 1920,
-        height: options.height || 1080,
+      // Set up consistent page configuration for all tabs
+      const standardViewport = {
+        width:
+          options.width ||
+          parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) ||
+          1920,
+        height:
+          options.height ||
+          parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) ||
+          1080,
         deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
       };
 
-      await page.setViewport(defaultViewport);
+      await page.setViewport(standardViewport);
 
       // Apply advanced stealth measures using the stealth service
       this.logger.info(
@@ -233,6 +376,10 @@ export class BrowserStreamingService extends EventEmitter {
           sessionId,
           targetUrl || task,
         );
+
+        // Set up CDP session recovery after stealth measures
+        await this.setupCDPSessionRecovery(page, sessionId);
+
         this.logger.info(`✅ Advanced stealth mode applied successfully`);
       } catch (stealthError) {
         this.logger.warn(
@@ -397,7 +544,7 @@ export class BrowserStreamingService extends EventEmitter {
         cdpPort: browserWSEndpoint.split(":").pop().split("/")[0], // Extract port from WSEndpoint
         streaming: false,
         streamCallback: null,
-        viewport: defaultViewport,
+        viewport: standardViewport,
         createdAt: new Date(),
         lastActivity: new Date(),
         mouseButtonState: new Set(), // Track pressed mouse buttons
@@ -413,6 +560,9 @@ export class BrowserStreamingService extends EventEmitter {
       };
 
       this.sessions.set(sessionId, session);
+
+      // Set up viewport enforcement for all page navigations
+      await this.setupViewportEnforcement(sessionId);
 
       // Initialize tab management
       await this.setupTabManagement(sessionId);
@@ -591,8 +741,14 @@ export class BrowserStreamingService extends EventEmitter {
         headless: false, // SHOW BROWSER WINDOW - you can see automation!
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
-          width: options.width || 1920,
-          height: options.height || 1200, // Increased for better content viewing
+          width:
+            options.width ||
+            parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) ||
+            1920,
+          height:
+            options.height ||
+            parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) ||
+            1080,
           deviceScaleFactor: 1,
         },
         args: [
@@ -902,6 +1058,18 @@ export class BrowserStreamingService extends EventEmitter {
       session.lastActivity = new Date();
       this.logger.info(`✅ Navigation completed for session ${sessionId}`);
     } catch (error) {
+      if (
+        error.message.includes("Session closed") ||
+        error.message.includes("Target closed") ||
+        error.message.includes("Protocol error") ||
+        error.message.includes("WebSocket connection closed") ||
+        error.message.includes("ConnectionClosedError")
+      ) {
+        this.logger.warn(
+          `Session ${sessionId} closed/disconnected during navigation: ${error.message}`,
+        );
+        throw new Error("Session closed or disconnected during navigation");
+      }
       this.logger.error(
         `❌ Navigation failed for session ${sessionId}:`,
         error,
@@ -957,17 +1125,23 @@ export class BrowserStreamingService extends EventEmitter {
           } catch (error) {
             if (
               error.message.includes("Session closed") ||
-              error.message.includes("Target closed")
+              error.message.includes("Target closed") ||
+              error.message.includes("Protocol error") ||
+              error.message.includes("WebSocket connection closed") ||
+              error.message.includes("ConnectionClosedError")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during click event`,
+                `Session ${sessionId} closed during click event: ${error.message}`,
               );
               return { success: false, message: "Session closed" };
             }
             // If click fails due to button state, try to reset and retry
-            if (error.message.includes("already pressed")) {
+            if (
+              error.message.includes("already pressed") ||
+              error.message.includes("is not pressed")
+            ) {
               this.logger.warn(
-                `Button ${button} already pressed - resetting state and retrying click`,
+                `Button ${button} state issue (${error.message}) - resetting state and retrying click`,
               );
               try {
                 // Try to release all buttons first
@@ -978,6 +1152,8 @@ export class BrowserStreamingService extends EventEmitter {
                 // Ignore reset errors
               }
               session.mouseButtonState.clear();
+              // Small delay before retry
+              await new Promise((resolve) => setTimeout(resolve, 100));
               // Retry the click
               await session.page.mouse.click(x, y, { button });
               this.logger.info(
@@ -1000,12 +1176,18 @@ export class BrowserStreamingService extends EventEmitter {
             } catch (error) {
               if (
                 error.message.includes("Session closed") ||
-                error.message.includes("Target closed")
+                error.message.includes("Target closed") ||
+                error.message.includes("Protocol error") ||
+                error.message.includes("WebSocket connection closed") ||
+                error.message.includes("ConnectionClosedError")
               ) {
                 this.logger.warn(
-                  `Session ${sessionId} closed during mousedown event`,
+                  `Session ${sessionId} closed/disconnected during mousedown event: ${error.message}`,
                 );
-                return { success: false, message: "Session closed" };
+                return {
+                  success: false,
+                  message: "Session closed or disconnected",
+                };
               }
               // If already pressed, try to reset state
               if (error.message.includes("already pressed")) {
@@ -1149,12 +1331,18 @@ export class BrowserStreamingService extends EventEmitter {
           } catch (error) {
             if (
               error.message.includes("Session closed") ||
-              error.message.includes("Target closed")
+              error.message.includes("Target closed") ||
+              error.message.includes("Protocol error") ||
+              error.message.includes("WebSocket connection closed") ||
+              error.message.includes("ConnectionClosedError")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during keydown event`,
+                `Session ${sessionId} closed/disconnected during keydown event: ${error.message}`,
               );
-              return { success: false, message: "Session closed" };
+              return {
+                success: false,
+                message: "Session closed or disconnected",
+              };
             }
             throw error;
           }
@@ -1165,12 +1353,18 @@ export class BrowserStreamingService extends EventEmitter {
           } catch (error) {
             if (
               error.message.includes("Session closed") ||
-              error.message.includes("Target closed")
+              error.message.includes("Target closed") ||
+              error.message.includes("Protocol error") ||
+              error.message.includes("WebSocket connection closed") ||
+              error.message.includes("ConnectionClosedError")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during keyup event`,
+                `Session ${sessionId} closed/disconnected during keyup event: ${error.message}`,
               );
-              return { success: false, message: "Session closed" };
+              return {
+                success: false,
+                message: "Session closed or disconnected",
+              };
             }
             throw error;
           }
@@ -1181,10 +1375,18 @@ export class BrowserStreamingService extends EventEmitter {
           } catch (error) {
             if (
               error.message.includes("Session closed") ||
-              error.message.includes("Target closed")
+              error.message.includes("Target closed") ||
+              error.message.includes("Protocol error") ||
+              error.message.includes("WebSocket connection closed") ||
+              error.message.includes("ConnectionClosedError")
             ) {
-              this.logger.warn(`Session ${sessionId} closed during type event`);
-              return { success: false, message: "Session closed" };
+              this.logger.warn(
+                `Session ${sessionId} closed/disconnected during type event: ${error.message}`,
+              );
+              return {
+                success: false,
+                message: "Session closed or disconnected",
+              };
             }
             throw error;
           }
@@ -1195,12 +1397,18 @@ export class BrowserStreamingService extends EventEmitter {
           } catch (error) {
             if (
               error.message.includes("Session closed") ||
-              error.message.includes("Target closed")
+              error.message.includes("Target closed") ||
+              error.message.includes("Protocol error") ||
+              error.message.includes("WebSocket connection closed") ||
+              error.message.includes("ConnectionClosedError")
             ) {
               this.logger.warn(
-                `Session ${sessionId} closed during press event`,
+                `Session ${sessionId} closed/disconnected during press event: ${error.message}`,
               );
-              return { success: false, message: "Session closed" };
+              return {
+                success: false,
+                message: "Session closed or disconnected",
+              };
             }
             throw error;
           }
@@ -1501,11 +1709,13 @@ export class BrowserStreamingService extends EventEmitter {
       // Create new page
       const newPage = await session.browser.newPage();
 
-      // Configure the new page
+      // Configure the new page with consistent viewport
       await newPage.setViewport({
-        width: 1920,
-        height: 1500,
+        width: parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) || 1920,
+        height: parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) || 1080,
         deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false,
       });
 
       await newPage.setUserAgent(
@@ -1569,9 +1779,18 @@ export class BrowserStreamingService extends EventEmitter {
 
       // Register initial tab
       const targetId = session.page.target()._targetId;
+      let initialTitle = "New Tab";
+      try {
+        initialTitle = (await session.page.title()) || "New Tab";
+      } catch (titleError) {
+        this.logger.debug(
+          `Failed to get initial page title: ${titleError.message}`,
+        );
+      }
+
       session.tabs.set(targetId, {
         page: session.page,
-        title: (await session.page.title()) || "New Tab",
+        title: initialTitle,
         url: session.page.url(),
         isActive: true,
         createdAt: new Date(),
@@ -1590,10 +1809,47 @@ export class BrowserStreamingService extends EventEmitter {
             if (newPage) {
               const newTargetId = target._targetId;
 
+              // 🔧 IMPORTANT: Set viewport for new tabs to match our configuration
+              try {
+                await newPage.setViewport({
+                  width:
+                    parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) ||
+                    1920,
+                  height:
+                    parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) ||
+                    1080,
+                  deviceScaleFactor: 1,
+                  isMobile: false,
+                  hasTouch: false,
+                });
+                this.logger.debug(
+                  `🖥️ Viewport set for new tab ${newTargetId}: ${parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) || 1920}x${parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) || 1080}`,
+                );
+
+                // 🔧 Apply comprehensive viewport enforcement for new tab
+                await this.setupViewportEnforcement(newPage, session);
+                this.logger.debug(
+                  `🔧 Comprehensive viewport enforcement applied to new tab ${newTargetId}`,
+                );
+              } catch (viewportError) {
+                this.logger.warn(
+                  `⚠️ Failed to set viewport for new tab: ${viewportError.message}`,
+                );
+              }
+
               // Add to tabs registry
+              let newTabTitle = "New Tab";
+              try {
+                newTabTitle = (await newPage.title()) || "New Tab";
+              } catch (titleError) {
+                this.logger.debug(
+                  `Failed to get new tab title: ${titleError.message}`,
+                );
+              }
+
               session.tabs.set(newTargetId, {
                 page: newPage,
-                title: (await newPage.title()) || "New Tab",
+                title: newTabTitle,
                 url: newPage.url(),
                 isActive: false,
                 createdAt: new Date(),
@@ -1716,7 +1972,14 @@ export class BrowserStreamingService extends EventEmitter {
             try {
               // Update tab information
               const oldUrl = tabInfo.url;
-              tabInfo.title = (await tabInfo.page.title()) || "Loading...";
+              try {
+                tabInfo.title = (await tabInfo.page.title()) || "Loading...";
+              } catch (titleError) {
+                this.logger.debug(
+                  `Failed to get tab title: ${titleError.message}`,
+                );
+                tabInfo.title = "Loading...";
+              }
               tabInfo.url = tabInfo.page.url();
 
               this.logger.debug(
@@ -1860,15 +2123,39 @@ export class BrowserStreamingService extends EventEmitter {
         actualTabIds.add(targetId);
 
         if (!session.tabs.has(targetId)) {
-          // Try to get title/url with timeout
+          // Try to get title/url with timeout and error handling
           let title, url;
           try {
+            // Check if page has main frame before getting title
+            if (page.mainFrame) {
+              try {
+                await page.mainFrame();
+              } catch (frameError) {
+                // Main frame not ready yet, use defaults
+                title = "Loading...";
+                url = "about:blank";
+                this.logger.debug(
+                  `Main frame not ready for tab ${targetId}: ${frameError.message}`,
+                );
+                // Create tab entry with default values and continue
+                session.tabs.set(targetId, {
+                  page: page,
+                  title: title,
+                  url: url,
+                  isActive: false,
+                  createdAt: new Date(),
+                  lastActiveAt: new Date(),
+                });
+                continue;
+              }
+            }
+
             const pageInfoPromise = Promise.all([
-              page.title(),
-              Promise.resolve(page.url()),
+              page.title().catch(() => "Loading..."),
+              Promise.resolve(page.url() || "about:blank"),
             ]);
             const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Page info timeout")), 5000),
+              setTimeout(() => reject(new Error("Page info timeout")), 3000),
             );
 
             [title, url] = await Promise.race([
@@ -1876,8 +2163,11 @@ export class BrowserStreamingService extends EventEmitter {
               timeoutPromise,
             ]);
           } catch (infoError) {
-            title = "New Tab";
+            title = "Loading...";
             url = page.url() || "about:blank";
+            this.logger.debug(
+              `Failed to get page info for tab ${targetId}: ${infoError.message}`,
+            );
           }
 
           session.tabs.set(targetId, {
@@ -1998,7 +2288,14 @@ export class BrowserStreamingService extends EventEmitter {
 
           const targetId = target._targetId;
           const url = page.url();
-          const title = await page.title();
+          let title = "Loading...";
+          try {
+            title = await page.title();
+          } catch (titleError) {
+            this.logger.debug(
+              `Failed to get page title for target ${targetId}: ${titleError.message}`,
+            );
+          }
 
           // Track this target
           currentTargetIds.add(targetId);
@@ -2269,7 +2566,14 @@ export class BrowserStreamingService extends EventEmitter {
         // **ENHANCED: Ensure the tab is in the registry before switching**
         if (!session.tabs.has(targetId)) {
           try {
-            const title = await result.page.title();
+            let title = "New Tab";
+            try {
+              title = await result.page.title();
+            } catch (titleError) {
+              this.logger.debug(
+                `Failed to get page title for new tab: ${titleError.message}`,
+              );
+            }
             session.tabs.set(targetId, {
               page: result.page,
               title: title || "New Tab",
@@ -2468,9 +2772,17 @@ export class BrowserStreamingService extends EventEmitter {
           const target = targets.find((t) => t._targetId === targetId);
           if (target && target.type() === "page") {
             const page = await target.page();
+            let title = "New Tab";
+            try {
+              title = (await page.title()) || "New Tab";
+            } catch (titleError) {
+              this.logger.debug(
+                `Failed to get page title for tab recovery: ${titleError.message}`,
+              );
+            }
             tabInfo = {
               page: page,
-              title: (await page.title()) || "New Tab",
+              title: title,
               url: page.url(),
               isActive: false,
               createdAt: new Date(),
@@ -2651,7 +2963,7 @@ export class BrowserStreamingService extends EventEmitter {
       if (session.streaming && session.streamCallback) {
         await newClient.send("Page.startScreencast", {
           format: "jpeg",
-          quality: 80,
+          quality: 95,
           maxWidth: session.viewport.width,
           maxHeight: session.viewport.height,
           everyNthFrame: 1,
@@ -2836,6 +3148,90 @@ export class BrowserStreamingService extends EventEmitter {
       return { success: true, message: "CDP session recovered successfully" };
     } else {
       return { success: false, message: "CDP session recovery failed" };
+    }
+  }
+
+  // **NEW: Setup viewport enforcement for all page navigations**
+  async setupViewportEnforcement(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      this.logger.error(
+        `Session ${sessionId} not found for viewport enforcement setup`,
+      );
+      return;
+    }
+
+    const { page, client } = session;
+    const standardViewport = {
+      width: parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_WIDTH) || 1920,
+      height: parseInt(process.env.BROWSER_DEFAULT_VIEWPORT_HEIGHT) || 1080,
+      deviceScaleFactor: 1,
+      isMobile: false,
+      hasTouch: false,
+    };
+
+    try {
+      // Set up page navigation listener to enforce viewport on every navigation
+      page.on("framenavigated", async (frame) => {
+        if (frame === page.mainFrame()) {
+          try {
+            // Force viewport reset on every main frame navigation
+            await page.setViewport(standardViewport);
+            this.logger.debug(
+              `🔧 Viewport enforced to ${standardViewport.width}x${standardViewport.height} for session ${sessionId} after navigation to ${frame.url()}`,
+            );
+          } catch (error) {
+            this.logger.debug(
+              `Viewport enforcement failed for session ${sessionId}: ${error.message}`,
+            );
+          }
+        }
+      });
+
+      // Also listen for page load events
+      page.on("load", async () => {
+        try {
+          await page.setViewport(standardViewport);
+          this.logger.debug(
+            `🔧 Viewport enforced to ${standardViewport.width}x${standardViewport.height} for session ${sessionId} after page load`,
+          );
+        } catch (error) {
+          this.logger.debug(
+            `Viewport enforcement on load failed for session ${sessionId}: ${error.message}`,
+          );
+        }
+      });
+
+      // Add CDP-level viewport enforcement
+      if (client) {
+        try {
+          await client.send("Emulation.setDeviceMetricsOverride", {
+            width: standardViewport.width,
+            height: standardViewport.height,
+            deviceScaleFactor: standardViewport.deviceScaleFactor,
+            mobile: standardViewport.isMobile,
+            fitWindow: false,
+            scale: 1.0,
+            screenWidth: standardViewport.width,
+            screenHeight: standardViewport.height,
+          });
+          this.logger.debug(
+            `🔧 CDP viewport override set to ${standardViewport.width}x${standardViewport.height} for session ${sessionId}`,
+          );
+        } catch (error) {
+          this.logger.debug(
+            `CDP viewport override failed for session ${sessionId}: ${error.message}`,
+          );
+        }
+      }
+
+      this.logger.info(
+        `✅ Viewport enforcement setup completed for session ${sessionId} (${standardViewport.width}x${standardViewport.height})`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to setup viewport enforcement for session ${sessionId}: ${error.message}`,
+      );
     }
   }
 }
