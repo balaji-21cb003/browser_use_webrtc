@@ -477,7 +477,8 @@ export class BrowserUseIntegrationService extends EventEmitter {
       if (useExistingBrowser && !cdpEndpoint && options.browserService) {
         try {
           // **ENHANCED: Use CDP endpoint with auto-recovery support**
-          const cdpEndpointWithRecovery = options.browserService.getBrowserWSEndpoint 
+          const cdpEndpointWithRecovery = options.browserService
+            .getBrowserWSEndpoint
             ? options.browserService.getBrowserWSEndpoint(sessionId)
             : null;
 
@@ -575,6 +576,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
         // Token cost tracking
         BROWSER_USE_CALCULATE_COST: "true",
 
+        // Timeout configurations for cloud server compatibility
+        BROWSER_USE_WATCHDOG_TIMEOUT:
+          process.env.BROWSER_USE_WATCHDOG_TIMEOUT || "60000",
+        BROWSER_USE_EVENT_TIMEOUT:
+          process.env.BROWSER_USE_EVENT_TIMEOUT || "30000",
+        BROWSER_PROTOCOL_TIMEOUT:
+          process.env.BROWSER_PROTOCOL_TIMEOUT || "120000",
+        CDP_TIMEOUT: process.env.CDP_TIMEOUT || "120000",
+        TAB_SYNC_TIMEOUT: process.env.TAB_SYNC_TIMEOUT || "30000",
+
         // Python environment - prefer root venv
         PYTHONPATH:
           process.platform === "win32"
@@ -606,7 +617,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
             key.includes("OPENAI") ||
             key.includes("GOOGLE") ||
             key.includes("LLM") ||
-            key.includes("PYTHON"),
+            key.includes("PYTHON") ||
+            key.includes("TIMEOUT") ||
+            key.includes("BROWSER_USE"),
         ),
       });
 

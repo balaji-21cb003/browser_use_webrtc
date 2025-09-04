@@ -76,6 +76,13 @@ class UnifiedBrowserUseAgent:
         self.headless = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
         self.browser_port = int(os.getenv("BROWSER_PORT", "9222"))
         
+        # Timeout configurations for cloud server compatibility
+        self.watchdog_timeout = int(os.getenv("BROWSER_USE_WATCHDOG_TIMEOUT", "60000")) / 1000  # Convert to seconds
+        self.event_timeout = int(os.getenv("BROWSER_USE_EVENT_TIMEOUT", "30000")) / 1000  # Convert to seconds
+        self.protocol_timeout = int(os.getenv("BROWSER_PROTOCOL_TIMEOUT", "120000")) / 1000  # Convert to seconds
+        self.cdp_timeout = int(os.getenv("CDP_TIMEOUT", "120000")) / 1000  # Convert to seconds
+        self.tab_sync_timeout = int(os.getenv("TAB_SYNC_TIMEOUT", "30000")) / 1000  # Convert to seconds
+        
     def setup_llm(self):
         """Setup LLM based on provider preference and available credentials"""
         if self.llm is not None:

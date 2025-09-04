@@ -19,7 +19,7 @@ export class BrowserStreamingService extends EventEmitter {
 
     // Initialize optimized tab detection
     this.tabDetection = new OptimizedTabDetection(this.logger);
-    
+
     // Initialize advanced stealth service
     this.stealthService = new AdvancedStealthService(this.logger);
 
@@ -41,7 +41,7 @@ export class BrowserStreamingService extends EventEmitter {
     this.logger.info("✅ Browser Streaming Service initialized");
   }
 
-  // Clean up mouse states for all sessions
+  // Clean up mouse states for all sessions with improved error handling
   async cleanupMouseStates() {
     try {
       for (const [sessionId, session] of this.sessions) {
@@ -59,6 +59,40 @@ export class BrowserStreamingService extends EventEmitter {
     }
   }
 
+  // Enhanced reset mouse state with better error recovery
+  async resetMouseState(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.page) return;
+
+    try {
+      // Clear our tracking state first
+      session.mouseButtonState.clear();
+
+      // Try to release all mouse buttons with individual error handling
+      const buttons = ["left", "right", "middle"];
+      for (const button of buttons) {
+        try {
+          await session.page.mouse.up({ button });
+        } catch (buttonError) {
+          // Ignore individual button errors - they might not be pressed
+          continue;
+        }
+      }
+
+      this.logger.debug(
+        `🖱️ Mouse state reset completed for session ${sessionId}`,
+      );
+    } catch (error) {
+      this.logger.debug(
+        `Mouse state reset failed for session ${sessionId}: ${error.message}`,
+      );
+      // Force clear our tracking state even if browser calls fail
+      if (session.mouseButtonState) {
+        session.mouseButtonState.clear();
+      }
+    }
+  }
+
   getSession(sessionId) {
     return this.sessions.get(sessionId);
   }
@@ -72,9 +106,13 @@ export class BrowserStreamingService extends EventEmitter {
       // Create a NEW browser instance for this session to enable true parallelism
       // Use less restrictive configuration for better compatibility
       const isProduction = process.env.NODE_ENV === "production";
+      const protocolTimeout =
+        parseInt(process.env.BROWSER_PROTOCOL_TIMEOUT) || 120000;
       const browser = await puppeteer.launch({
         headless: process.env.BROWSER_HEADLESS, // Allow non-headless in development
         executablePath: process.env.CHROME_PATH || undefined,
+        timeout: parseInt(process.env.BROWSER_LAUNCH_TIMEOUT) || 120000,
+        protocolTimeout: protocolTimeout,
         defaultViewport: {
           width: options.width || 1920,
           height: options.height || 1200,
@@ -87,7 +125,7 @@ export class BrowserStreamingService extends EventEmitter {
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
-          
+
           // Core anti-detection measures
           "--disable-blink-features=AutomationControlled",
           "--exclude-switches=enable-automation",
@@ -153,11 +191,13 @@ export class BrowserStreamingService extends EventEmitter {
           "--disable-site-isolation-trials",
 
           // Linux-specific optimizations for server environments
-          ...(os.platform() === "linux" ? [
-            "--no-zygote",
-            "--disable-gpu-sandbox",
-            "--disable-software-rasterizer",
-          ] : []),
+          ...(os.platform() === "linux"
+            ? [
+                "--no-zygote",
+                "--disable-gpu-sandbox",
+                "--disable-software-rasterizer",
+              ]
+            : []),
         ].filter((arg) => arg !== ""), // Remove empty args
       });
 
@@ -174,19 +214,32 @@ export class BrowserStreamingService extends EventEmitter {
       await page.setViewport(defaultViewport);
 
       // Apply advanced stealth measures using the stealth service
-      this.logger.info(`🥷 Applying stealth mode for Instagram/LinkedIn compatibility...`);
-      
+      this.logger.info(
+        `🥷 Applying stealth mode for Instagram/LinkedIn compatibility...`,
+      );
+
       // Extract URL from options or use default Instagram URL for stealth context
-      const targetUrl = options.url || 'https://instagram.com';
-      const task = options.task || 'social media automation';
-      
+      const targetUrl = options.url || "https://instagram.com";
+      const task = options.task || "social media automation";
+
       try {
-        await this.stealthService.applyStealthMeasures(page, sessionId, targetUrl || task);
-        await this.stealthService.addHumanBehavior(page, sessionId, targetUrl || task);
+        await this.stealthService.applyStealthMeasures(
+          page,
+          sessionId,
+          targetUrl || task,
+        );
+        await this.stealthService.addHumanBehavior(
+          page,
+          sessionId,
+          targetUrl || task,
+        );
         this.logger.info(`✅ Advanced stealth mode applied successfully`);
       } catch (stealthError) {
-        this.logger.warn(`⚠️ Stealth mode failed, falling back to basic measures:`, stealthError.message);
-        
+        this.logger.warn(
+          `⚠️ Stealth mode failed, falling back to basic measures:`,
+          stealthError.message,
+        );
+
         // Fallback to basic stealth if advanced fails
         await page.setUserAgent(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -260,32 +313,59 @@ export class BrowserStreamingService extends EventEmitter {
       for (let retry = 0; retry < maxRetries; retry++) {
         try {
           client = await page.target().createCDPSession();
-          this.logger.debug(`🔧 CDP session created for session ${sessionId} (attempt ${retry + 1})`);
+          this.logger.debug(
+            `🔧 CDP session created for session ${sessionId} (attempt ${retry + 1})`,
+          );
 
-          // Enable CDP domains with timeout and error handling
-          await Promise.all([
-            client.send("Page.enable").catch(err => {
-              this.logger.warn(`Page.enable failed: ${err.message}`);
-              throw err;
-            }),
-            client.send("Runtime.enable").catch(err => {
-              this.logger.warn(`Runtime.enable failed: ${err.message}`);
-              throw err;
-            }),
-            client.send("DOM.enable").catch(err => {
-              this.logger.warn(`DOM.enable failed: ${err.message}`);
-              throw err;
-            }),
-            client.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(err => {
-              this.logger.debug(`Target.setAutoAttach failed: ${err.message}`);
-              // Non-critical, continue
-            })
+          // Enable CDP domains with timeout and error handling with extended timeouts for cloud servers
+          const cdpTimeout = parseInt(process.env.CDP_TIMEOUT) || 120000;
+
+          await Promise.race([
+            Promise.all([
+              client.send("Page.enable").catch((err) => {
+                this.logger.warn(`Page.enable failed: ${err.message}`);
+                return null; // Continue with other commands
+              }),
+              client.send("Runtime.enable").catch((err) => {
+                this.logger.warn(`Runtime.enable failed: ${err.message}`);
+                return null; // Continue with other commands
+              }),
+              client.send("DOM.enable").catch((err) => {
+                this.logger.warn(`DOM.enable failed: ${err.message}`);
+                return null; // Continue with other commands
+              }),
+              client
+                .send("Target.setAutoAttach", {
+                  autoAttach: true,
+                  waitForDebuggerOnStart: false,
+                  flatten: true,
+                })
+                .catch((err) => {
+                  this.logger.debug(
+                    `Target.setAutoAttach failed: ${err.message}`,
+                  );
+                  return null; // Non-critical, continue
+                }),
+            ]),
+            new Promise((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(`CDP domain setup timeout after ${cdpTimeout}ms`),
+                  ),
+                cdpTimeout,
+              ),
+            ),
           ]);
 
-          this.logger.debug(`🔧 All CDP domains enabled for session ${sessionId}`);
+          this.logger.debug(
+            `🔧 All CDP domains enabled for session ${sessionId}`,
+          );
           break; // Success, exit retry loop
         } catch (error) {
-          this.logger.warn(`CDP setup attempt ${retry + 1} failed: ${error.message}`);
+          this.logger.warn(
+            `CDP setup attempt ${retry + 1} failed: ${error.message}`,
+          );
           if (client) {
             try {
               await client.detach();
@@ -294,10 +374,14 @@ export class BrowserStreamingService extends EventEmitter {
             }
           }
           if (retry === maxRetries - 1) {
-            throw new Error(`Failed to setup CDP session after ${maxRetries} attempts: ${error.message}`);
+            throw new Error(
+              `Failed to setup CDP session after ${maxRetries} attempts: ${error.message}`,
+            );
           }
           // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1)));
+          await new Promise((resolve) =>
+            setTimeout(resolve, 1000 * (retry + 1)),
+          );
         }
       }
 
@@ -357,21 +441,27 @@ export class BrowserStreamingService extends EventEmitter {
 
     try {
       session.cdpRecoveryInProgress = true;
-      this.logger.info(`🔄 Attempting CDP session recovery for session ${sessionId}`);
+      this.logger.info(
+        `🔄 Attempting CDP session recovery for session ${sessionId}`,
+      );
 
       // Increment retry count
       session.cdpRetryCount = (session.cdpRetryCount || 0) + 1;
-      
+
       // Max 3 recovery attempts
       if (session.cdpRetryCount > 3) {
-        this.logger.error(`❌ CDP recovery failed - max retries exceeded for session ${sessionId}`);
+        this.logger.error(
+          `❌ CDP recovery failed - max retries exceeded for session ${sessionId}`,
+        );
         return false;
       }
 
       // Get current page reference
       const currentPage = session.page;
       if (!currentPage || currentPage.isClosed()) {
-        this.logger.error(`❌ CDP recovery failed - page is closed for session ${sessionId}`);
+        this.logger.error(
+          `❌ CDP recovery failed - page is closed for session ${sessionId}`,
+        );
         return false;
       }
 
@@ -381,21 +471,29 @@ export class BrowserStreamingService extends EventEmitter {
           await session.client.detach();
         } catch (error) {
           // Ignore detach errors
-          this.logger.debug(`Old CDP client detach completed for session ${sessionId}`);
+          this.logger.debug(
+            `Old CDP client detach completed for session ${sessionId}`,
+          );
         }
       }
 
       // Create new CDP session
       const newClient = await currentPage.target().createCDPSession();
-      
+
       // Re-enable domains
       await Promise.all([
         newClient.send("Page.enable"),
-        newClient.send("Runtime.enable"), 
+        newClient.send("Runtime.enable"),
         newClient.send("DOM.enable"),
-        newClient.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {
-          // Non-critical
-        })
+        newClient
+          .send("Target.setAutoAttach", {
+            autoAttach: true,
+            waitForDebuggerOnStart: false,
+            flatten: true,
+          })
+          .catch(() => {
+            // Non-critical
+          }),
       ]);
 
       // Update session with new client
@@ -407,11 +505,15 @@ export class BrowserStreamingService extends EventEmitter {
         await this.restartStreamingWithNewClient(session, newClient);
       }
 
-      this.logger.info(`✅ CDP session recovery successful for session ${sessionId}`);
+      this.logger.info(
+        `✅ CDP session recovery successful for session ${sessionId}`,
+      );
       return true;
-
     } catch (error) {
-      this.logger.error(`❌ CDP session recovery failed for session ${sessionId}:`, error.message);
+      this.logger.error(
+        `❌ CDP session recovery failed for session ${sessionId}:`,
+        error.message,
+      );
       session.lastCdpError = error.message;
       return false;
     } finally {
@@ -422,7 +524,9 @@ export class BrowserStreamingService extends EventEmitter {
   // **NEW: Restart streaming with new CDP client**
   async restartStreamingWithNewClient(session, newClient) {
     try {
-      this.logger.info(`🎬 Restarting streaming with new CDP client for session ${session.id}`);
+      this.logger.info(
+        `🎬 Restarting streaming with new CDP client for session ${session.id}`,
+      );
 
       // Start new screencast
       await newClient.send("Page.startScreencast", {
@@ -444,12 +548,17 @@ export class BrowserStreamingService extends EventEmitter {
             session.streamCallback(params.data);
           }
         } catch (error) {
-          this.logger.error(`Error handling screencast frame after recovery:`, error.message);
+          this.logger.error(
+            `Error handling screencast frame after recovery:`,
+            error.message,
+          );
           // Don't throw, just log
         }
       });
 
-      this.logger.info(`✅ Streaming restarted successfully for session ${session.id}`);
+      this.logger.info(
+        `✅ Streaming restarted successfully for session ${session.id}`,
+      );
     } catch (error) {
       this.logger.error(`❌ Failed to restart streaming:`, error.message);
       throw error;
@@ -466,7 +575,7 @@ export class BrowserStreamingService extends EventEmitter {
     // Check if CDP session needs recovery
     if (session.lastCdpError && !session.cdpRecoveryInProgress) {
       // Trigger async recovery (don't wait for it)
-      this.recoverCdpSession(sessionId).catch(error => {
+      this.recoverCdpSession(sessionId).catch((error) => {
         this.logger.error(`Background CDP recovery failed: ${error.message}`);
       });
     }
@@ -609,10 +718,16 @@ export class BrowserStreamingService extends EventEmitter {
       // Reset mouse button state to prevent stuck buttons
       session.mouseButtonState.clear();
       try {
-        // Try to release any stuck mouse buttons
-        await session.page.mouse.up({ button: "left" });
-        await session.page.mouse.up({ button: "right" });
-        await session.page.mouse.up({ button: "middle" });
+        // Enhanced mouse state reset with individual button handling
+        const buttons = ["left", "right", "middle"];
+        for (const button of buttons) {
+          try {
+            await session.page.mouse.up({ button });
+          } catch (buttonError) {
+            // Individual button errors are expected if button isn't pressed
+            continue;
+          }
+        }
         this.logger.debug(`🖱️ Mouse state reset for session ${sessionId}`);
       } catch (resetError) {
         // Ignore errors when resetting mouse state
@@ -651,20 +766,26 @@ export class BrowserStreamingService extends EventEmitter {
         );
       } catch (error) {
         // **ENHANCED: Detect CDP session failures and attempt recovery**
-        if (error.message.includes("Session with given id not found") || 
-            error.message.includes("Target closed") ||
-            error.message.includes("Session closed")) {
-          this.logger.warn(`🔄 CDP session lost for ${sessionId}, attempting recovery...`);
+        if (
+          error.message.includes("Session with given id not found") ||
+          error.message.includes("Target closed") ||
+          error.message.includes("Session closed")
+        ) {
+          this.logger.warn(
+            `🔄 CDP session lost for ${sessionId}, attempting recovery...`,
+          );
           session.lastCdpError = error.message;
-          
+
           const recovered = await this.recoverCdpSession(sessionId);
           if (recovered) {
             // Retry streaming with recovered session
-            this.logger.info(`🔄 Retrying streaming after CDP recovery for ${sessionId}`);
+            this.logger.info(
+              `🔄 Retrying streaming after CDP recovery for ${sessionId}`,
+            );
             return await this.startStreaming(sessionId, callback);
           }
         }
-        
+
         this.logger.error(
           `❌ Failed to start screencast for session ${sessionId}:`,
           error,
@@ -701,15 +822,21 @@ export class BrowserStreamingService extends EventEmitter {
           }
         } catch (error) {
           // **ENHANCED: Handle CDP errors in screencast frame processing**
-          if (error.message.includes("Session with given id not found") || 
-              error.message.includes("Target closed") ||
-              error.message.includes("Session closed")) {
-            this.logger.warn(`🔄 CDP error in screencast frame for ${sessionId}: ${error.message}`);
+          if (
+            error.message.includes("Session with given id not found") ||
+            error.message.includes("Target closed") ||
+            error.message.includes("Session closed")
+          ) {
+            this.logger.warn(
+              `🔄 CDP error in screencast frame for ${sessionId}: ${error.message}`,
+            );
             session.lastCdpError = error.message;
-            
+
             // Trigger recovery in background (don't block frame processing)
-            this.recoverCdpSession(sessionId).catch(recoveryError => {
-              this.logger.error(`Background CDP recovery failed: ${recoveryError.message}`);
+            this.recoverCdpSession(sessionId).catch((recoveryError) => {
+              this.logger.error(
+                `Background CDP recovery failed: ${recoveryError.message}`,
+              );
             });
           } else {
             this.logger.error(
@@ -897,7 +1024,7 @@ export class BrowserStreamingService extends EventEmitter {
           }
           break;
         case "mouseup":
-          // Always try to release the button
+          // Enhanced mouseup handling with state recovery
           try {
             await session.page.mouse.up({ button });
             session.mouseButtonState.delete(button);
@@ -915,13 +1042,21 @@ export class BrowserStreamingService extends EventEmitter {
               return { success: false, message: "Session closed" };
             }
             // If button wasn't pressed, just remove from tracking
-            if (error.message.includes("not pressed")) {
+            if (
+              error.message.includes("not pressed") ||
+              error.message.includes("is not pressed")
+            ) {
               this.logger.debug(
                 `Button ${button} was not pressed, removing from tracking`,
               );
               session.mouseButtonState.delete(button);
+              // Don't throw error for this case - it's recoverable
             } else {
-              throw error;
+              this.logger.error(
+                `Mouseup error for ${button}: ${error.message}`,
+              );
+              // For other errors, clear the button state and continue
+              session.mouseButtonState.delete(button);
             }
           }
           break;
@@ -1684,66 +1819,139 @@ export class BrowserStreamingService extends EventEmitter {
   /**
    * **ENHANCED: Synchronize tab registry with actual browser state**
    * This ensures that the tab registry matches the actual tabs in the browser
+   * with improved error handling and timeouts for cloud environments
    */
   async syncTabRegistry(sessionId) {
     const session = this.sessions.get(sessionId);
     if (!session || !session.browser) return;
 
     try {
-      const pages = await session.browser.pages();
-      const currentTabIds = new Set(session.tabs.keys());
-      const actualTabIds = new Set();
+      // Add timeout protection for cloud servers
+      const syncTimeout = parseInt(process.env.TAB_SYNC_TIMEOUT) || 30000;
 
-      // Add/update tabs that exist in browser
+      const syncPromise = this._performTabSync(session, sessionId);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Tab sync timeout after ${syncTimeout}ms`)),
+          syncTimeout,
+        ),
+      );
+
+      await Promise.race([syncPromise, timeoutPromise]);
+    } catch (error) {
+      this.logger.error(`Error syncing tab registry: ${error.message}`);
+      // Fallback: minimal sync without page interactions
+      await this._fallbackTabSync(session, sessionId);
+    }
+  }
+
+  /**
+   * Perform full tab synchronization
+   */
+  async _performTabSync(session, sessionId) {
+    const pages = await session.browser.pages();
+    const currentTabIds = new Set(session.tabs.keys());
+    const actualTabIds = new Set();
+
+    // Add/update tabs that exist in browser
+    for (const page of pages) {
+      try {
+        const targetId = page.target()._targetId;
+        actualTabIds.add(targetId);
+
+        if (!session.tabs.has(targetId)) {
+          // Try to get title/url with timeout
+          let title, url;
+          try {
+            const pageInfoPromise = Promise.all([
+              page.title(),
+              Promise.resolve(page.url()),
+            ]);
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Page info timeout")), 5000),
+            );
+
+            [title, url] = await Promise.race([
+              pageInfoPromise,
+              timeoutPromise,
+            ]);
+          } catch (infoError) {
+            title = "New Tab";
+            url = page.url() || "about:blank";
+          }
+
+          session.tabs.set(targetId, {
+            page: page,
+            title: title || "New Tab",
+            url: url,
+            isActive: false,
+            createdAt: new Date(),
+            lastActiveAt: new Date(),
+          });
+
+          this.logger.debug(`📑 Auto-registered tab ${targetId}: ${title}`);
+        } else {
+          // Update existing tab info (minimal update)
+          const tabInfo = session.tabs.get(targetId);
+          if (tabInfo) {
+            tabInfo.page = page; // Update page reference
+            try {
+              // Quick update without blocking
+              tabInfo.url = page.url();
+              // Skip title update if it might block
+            } catch (error) {
+              // Keep old info if update fails
+            }
+          }
+        }
+      } catch (error) {
+        // Skip problematic pages
+        continue;
+      }
+    }
+
+    // Remove tabs that no longer exist in browser
+    for (const tabId of currentTabIds) {
+      if (!actualTabIds.has(tabId)) {
+        session.tabs.delete(tabId);
+        this.logger.debug(`🗑️ Removed stale tab ${tabId} from registry`);
+      }
+    }
+  }
+
+  /**
+   * Fallback tab sync that only updates essential information
+   */
+  async _fallbackTabSync(session, sessionId) {
+    try {
+      const pages = await session.browser.pages();
+
+      // Simple fallback: just ensure we have page references
       for (const page of pages) {
         try {
           const targetId = page.target()._targetId;
-          actualTabIds.add(targetId);
-
           if (!session.tabs.has(targetId)) {
-            const title = await page.title();
-            const url = page.url();
-
             session.tabs.set(targetId, {
               page: page,
-              title: title || "New Tab",
-              url: url,
+              title: "Tab",
+              url: page.url() || "about:blank",
               isActive: false,
               createdAt: new Date(),
               lastActiveAt: new Date(),
             });
-
-            this.logger.debug(`📑 Auto-registered tab ${targetId}: ${title}`);
           } else {
-            // Update existing tab info
+            // Just update page reference
             const tabInfo = session.tabs.get(targetId);
             if (tabInfo) {
-              tabInfo.page = page; // Update page reference
-              try {
-                tabInfo.title = await page.title();
-                tabInfo.url = page.url();
-              } catch (error) {
-                // Page might be closed, keep old info
-              }
+              tabInfo.page = page;
             }
           }
         } catch (error) {
-          // Skip problematic pages
           continue;
         }
       }
-
-      // Remove tabs that no longer exist in browser
-      for (const tabId of currentTabIds) {
-        if (!actualTabIds.has(tabId)) {
-          session.tabs.delete(tabId);
-          this.logger.debug(`🗑️ Removed stale tab ${tabId} from registry`);
-        }
-      }
-
-      // this.logger.debug(`🔄 Tab registry synced: ${session.tabs.size} tabs`);
     } catch (error) {
-      this.logger.error(`Error syncing tab registry: ${error.message}`);
+      this.logger.debug(`Fallback tab sync failed: ${error.message}`);
     }
   }
 
@@ -2407,12 +2615,16 @@ export class BrowserStreamingService extends EventEmitter {
         await Promise.all([
           newClient.send("Page.enable"),
           newClient.send("Runtime.enable"),
-          newClient.send("DOM.enable")
+          newClient.send("DOM.enable"),
         ]);
       } catch (error) {
-        if (error.message.includes("Session with given id not found") || 
-            error.message.includes("Target closed")) {
-          this.logger.warn(`🔄 CDP error during tab switch for ${sessionId}: ${error.message}`);
+        if (
+          error.message.includes("Session with given id not found") ||
+          error.message.includes("Target closed")
+        ) {
+          this.logger.warn(
+            `🔄 CDP error during tab switch for ${sessionId}: ${error.message}`,
+          );
           // Try to recover the main session first
           const recovered = await this.recoverCdpSession(sessionId);
           if (recovered) {
@@ -2421,7 +2633,7 @@ export class BrowserStreamingService extends EventEmitter {
             await Promise.all([
               newClient.send("Page.enable"),
               newClient.send("Runtime.enable"),
-              newClient.send("DOM.enable")
+              newClient.send("DOM.enable"),
             ]);
           } else {
             throw error;
@@ -2613,9 +2825,11 @@ export class BrowserStreamingService extends EventEmitter {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    this.logger.info(`🔄 Force CDP recovery requested for session ${sessionId}`);
+    this.logger.info(
+      `🔄 Force CDP recovery requested for session ${sessionId}`,
+    );
     const recovered = await this.recoverCdpSession(sessionId);
-    
+
     if (recovered) {
       // Reset retry count on successful manual recovery
       session.cdpRetryCount = 0;
