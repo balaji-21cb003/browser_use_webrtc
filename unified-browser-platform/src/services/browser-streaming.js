@@ -302,6 +302,21 @@ export class BrowserStreamingService extends EventEmitter {
       session.streamCallback = callback;
       session.streaming = true;
 
+      // Reset mouse button state to prevent stuck buttons
+      session.mouseButtonState.clear();
+      try {
+        // Try to release any stuck mouse buttons
+        await session.page.mouse.up({ button: "left" });
+        await session.page.mouse.up({ button: "right" });
+        await session.page.mouse.up({ button: "middle" });
+        this.logger.debug(`🖱️ Mouse state reset for session ${sessionId}`);
+      } catch (resetError) {
+        // Ignore errors when resetting mouse state
+        this.logger.debug(
+          `Mouse state reset attempted for session ${sessionId}`,
+        );
+      }
+
       // Start screencast with higher quality settings
       this.logger.debug(
         `🎬 Sending Page.startScreencast for session ${sessionId}`,
@@ -472,9 +487,14 @@ export class BrowserStreamingService extends EventEmitter {
 
       switch (type) {
         case "click":
-          // For click, we don't need to track state
+          // For click events, reset button state first and use click API
           try {
+            // Clear any existing button state to prevent conflicts
+            session.mouseButtonState.clear();
             await session.page.mouse.click(x, y, { button });
+            this.logger.debug(
+              `✅ Click executed successfully at (${x}, ${y}) with button ${button}`,
+            );
           } catch (error) {
             if (
               error.message.includes("Session closed") ||
@@ -485,7 +505,28 @@ export class BrowserStreamingService extends EventEmitter {
               );
               return { success: false, message: "Session closed" };
             }
-            throw error;
+            // If click fails due to button state, try to reset and retry
+            if (error.message.includes("already pressed")) {
+              this.logger.warn(
+                `Button ${button} already pressed - resetting state and retrying click`,
+              );
+              try {
+                // Try to release all buttons first
+                await session.page.mouse.up({ button: "left" });
+                await session.page.mouse.up({ button: "right" });
+                await session.page.mouse.up({ button: "middle" });
+              } catch (resetError) {
+                // Ignore reset errors
+              }
+              session.mouseButtonState.clear();
+              // Retry the click
+              await session.page.mouse.click(x, y, { button });
+              this.logger.info(
+                `✅ Click retry successful after state reset at (${x}, ${y}) with button ${button}`,
+              );
+            } else {
+              throw error;
+            }
           }
           break;
         case "mousedown":
@@ -494,6 +535,9 @@ export class BrowserStreamingService extends EventEmitter {
             try {
               await session.page.mouse.down({ button });
               session.mouseButtonState.add(button);
+              this.logger.debug(
+                `✅ Mouse down executed at (${x}, ${y}) with button ${button}`,
+              );
             } catch (error) {
               if (
                 error.message.includes("Session closed") ||
@@ -504,29 +548,48 @@ export class BrowserStreamingService extends EventEmitter {
                 );
                 return { success: false, message: "Session closed" };
               }
-              // If already pressed, just add to our tracking
-              session.mouseButtonState.add(button);
+              // If already pressed, try to reset state
+              if (error.message.includes("already pressed")) {
+                this.logger.warn(
+                  `Button ${button} already pressed - updating state tracking`,
+                );
+                session.mouseButtonState.add(button);
+              } else {
+                throw error;
+              }
             }
+          } else {
+            this.logger.debug(
+              `Mouse button ${button} already tracked as pressed, skipping mousedown`,
+            );
           }
           break;
         case "mouseup":
-          // Only release if we think it's pressed
-          if (session.mouseButtonState.has(button)) {
-            try {
-              await session.page.mouse.up({ button });
+          // Always try to release the button
+          try {
+            await session.page.mouse.up({ button });
+            session.mouseButtonState.delete(button);
+            this.logger.debug(
+              `✅ Mouse up executed at (${x}, ${y}) with button ${button}`,
+            );
+          } catch (error) {
+            if (
+              error.message.includes("Session closed") ||
+              error.message.includes("Target closed")
+            ) {
+              this.logger.warn(
+                `Session ${sessionId} closed during mouseup event`,
+              );
+              return { success: false, message: "Session closed" };
+            }
+            // If button wasn't pressed, just remove from tracking
+            if (error.message.includes("not pressed")) {
+              this.logger.debug(
+                `Button ${button} was not pressed, removing from tracking`,
+              );
               session.mouseButtonState.delete(button);
-            } catch (error) {
-              if (
-                error.message.includes("Session closed") ||
-                error.message.includes("Target closed")
-              ) {
-                this.logger.warn(
-                  `Session ${sessionId} closed during mouseup event`,
-                );
-                return { success: false, message: "Session closed" };
-              }
-              // If not pressed, just remove from our tracking
-              session.mouseButtonState.delete(button);
+            } else {
+              throw error;
             }
           }
           break;

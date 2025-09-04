@@ -373,6 +373,7 @@
           let isDragging = false;
           let lastMousePosition = { x: 0, y: 0 };
           let dragStartPosition = { x: 0, y: 0 };
+          let mouseButtonPressed = false;
 
           // Mouse down events
           this.canvas.addEventListener("mousedown", (e) => {
@@ -382,6 +383,7 @@
             if (!coords) return;
 
             isDragging = true;
+            mouseButtonPressed = true;
             dragStartPosition = { x: coords.x, y: coords.y };
             lastMousePosition = { x: coords.x, y: coords.y };
 
@@ -421,12 +423,17 @@
             const coords = this.getScaledCoordinates(e);
             if (!coords) {
               isDragging = false;
+              mouseButtonPressed = false;
               return;
             }
 
             const button =
               e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
-            this.sendMouseEvent("mouseup", coords.x, coords.y, 0, 0, button);
+
+            // Only send mouseup if we actually sent a mousedown
+            if (mouseButtonPressed) {
+              this.sendMouseEvent("mouseup", coords.x, coords.y, 0, 0, button);
+            }
 
             // If it was a short drag, treat it as a click
             const dragDistance = Math.sqrt(
@@ -434,18 +441,26 @@
                 Math.pow(coords.y - dragStartPosition.y, 2),
             );
 
-            if (dragDistance < 5) {
-              this.sendMouseEvent("click", coords.x, coords.y);
+            // Send click only for short drags/clicks and only if we have a clean mouse state
+            if (dragDistance < 5 && mouseButtonPressed) {
+              // Small delay to ensure mouseup is processed first
+              setTimeout(() => {
+                this.sendMouseEvent("click", coords.x, coords.y);
+              }, 10);
             }
 
             isDragging = false;
+            mouseButtonPressed = false;
           });
 
-          // Click events
+          // Click events - only for standalone clicks (not after drag)
           this.canvas.addEventListener("click", (e) => {
-            if (!this.currentSession || isDragging) return;
+            if (!this.currentSession || isDragging || mouseButtonPressed)
+              return;
             const coords = this.getScaledCoordinates(e);
             if (!coords) return;
+
+            // Only send click if we haven't already handled it in mouseup
             this.sendMouseEvent("click", coords.x, coords.y);
           });
 
@@ -586,10 +601,7 @@
             timestamp: Date.now(),
           });
 
-          // Visual feedback for clicks
-          if (type === "click") {
-            this.showClickFeedback(preciseX, preciseY);
-          }
+          // Visual feedback for clicks removed - no red circle on click
         }
 
         // Send keyboard events
@@ -606,36 +618,10 @@
           });
         }
 
-        // Visual click feedback
-        showClickFeedback(x, y) {
-          const rect = this.canvas.getBoundingClientRect();
-
-          // Convert canvas coordinates back to display coordinates
-          const displayX = (x / this.canvas.width) * rect.width;
-          const displayY = (y / this.canvas.height) * rect.height;
-
-          const ripple = document.createElement("div");
-          ripple.style.position = "absolute";
-          ripple.style.left = `${displayX - 15}px`;
-          ripple.style.top = `${displayY - 15}px`;
-          ripple.style.width = "30px";
-          ripple.style.height = "30px";
-          ripple.style.borderRadius = "50%";
-          ripple.style.background = "rgba(255, 0, 0, 0.8)";
-          ripple.style.border = "3px solid rgba(255, 255, 255, 0.9)";
-          ripple.style.animation = "ripple 0.8s ease-out";
-          ripple.style.pointerEvents = "none";
-          ripple.style.zIndex = "1000";
-
-          this.canvas.parentElement.style.position = "relative";
-          this.canvas.parentElement.appendChild(ripple);
-
-          setTimeout(() => {
-            if (ripple.parentElement) {
-              ripple.parentElement.removeChild(ripple);
-            }
-          }, 800);
-        }
+        // Visual click feedback - DISABLED
+        // showClickFeedback(x, y) {
+        //   // Click feedback has been disabled per user request
+        // }
 
         // Show security blocked message
         showSecurityBlocked(message) {

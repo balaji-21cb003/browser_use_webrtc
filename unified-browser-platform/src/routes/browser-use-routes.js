@@ -1261,13 +1261,21 @@ export function createBrowserUseRoutes(
     }
   });
 
-  // Get service health status
+  // Get service health status with enhanced file tracking info
   router.get("/health", async (req, res) => {
     try {
       const health = browserUseService.isHealthy();
+      const fileStats = browserUseService.getFileTrackingStats();
+
       res.json({
         success: true,
         health: health,
+        fileTracking: fileStats,
+        performance: {
+          activeTasks: browserUseService.getActiveTasks().length,
+          totalSessions: browserUseService.uploadedFiles.size,
+          memoryUsage: process.memoryUsage(),
+        },
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
@@ -1275,6 +1283,49 @@ export function createBrowserUseRoutes(
       res.status(500).json({
         error: error.message,
         type: "health-check-error",
+      });
+    }
+  });
+
+  // **NEW: File Management Statistics Endpoint**
+  router.get("/stats/files", async (req, res) => {
+    try {
+      const stats = browserUseService.getFileTrackingStats();
+      res.json({
+        success: true,
+        statistics: stats,
+        recommendations: generateFileTrackingRecommendations(stats),
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error("Failed to get file statistics:", error);
+      res.status(500).json({
+        error: error.message,
+        type: "file-stats-error",
+      });
+    }
+  });
+
+  // **NEW: Manual cleanup endpoint**
+  router.post("/cleanup/files", async (req, res) => {
+    try {
+      const beforeStats = browserUseService.getFileTrackingStats();
+      browserUseService.cleanupExpiredFileTracking();
+      const afterStats = browserUseService.getFileTrackingStats();
+
+      res.json({
+        success: true,
+        message: "File tracking cleanup completed",
+        before: beforeStats,
+        after: afterStats,
+        cleaned: beforeStats.totalFiles - afterStats.totalFiles,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error("Failed to cleanup files:", error);
+      res.status(500).json({
+        error: error.message,
+        type: "cleanup-error",
       });
     }
   });
@@ -1452,14 +1503,14 @@ export function createBrowserUseRoutes(
         success: true,
         files: files,
         count: files.length,
-        message: `Found ${files.length} downloaded files`
+        message: `Found ${files.length} downloaded files`,
       });
     } catch (error) {
       logger.error("❌ Failed to get downloaded files:", error);
       res.status(500).json({
         success: false,
         error: error.message,
-        type: "download-list-error"
+        type: "download-list-error",
       });
     }
   });
@@ -1469,13 +1520,13 @@ export function createBrowserUseRoutes(
     try {
       const { fileName } = req.params;
       const files = browserUseService.getDownloadedFiles();
-      const file = files.find(f => f.fileName === fileName);
+      const file = files.find((f) => f.fileName === fileName);
 
       if (!file) {
         return res.status(404).json({
           success: false,
           error: "File not found",
-          type: "file-not-found"
+          type: "file-not-found",
         });
       }
 
@@ -1487,7 +1538,7 @@ export function createBrowserUseRoutes(
             res.status(500).json({
               success: false,
               error: "Failed to send file",
-              type: "file-send-error"
+              type: "file-send-error",
             });
           }
         } else {
@@ -1499,7 +1550,7 @@ export function createBrowserUseRoutes(
       res.status(500).json({
         success: false,
         error: error.message,
-        type: "download-error"
+        type: "download-error",
       });
     }
   });
@@ -1509,37 +1560,37 @@ export function createBrowserUseRoutes(
     try {
       const { fileName } = req.params;
       const files = browserUseService.getDownloadedFiles();
-      const file = files.find(f => f.fileName === fileName);
+      const file = files.find((f) => f.fileName === fileName);
 
       if (!file) {
         return res.status(404).json({
           success: false,
           error: "File not found",
-          type: "file-not-found"
+          type: "file-not-found",
         });
       }
 
       // Read file content
-      const fs = await import('fs');
-      const content = fs.readFileSync(file.filePath, 'utf8');
+      const fs = await import("fs");
+      const content = fs.readFileSync(file.filePath, "utf8");
 
       // Determine content type
-      const ext = fileName.split('.').pop().toLowerCase();
+      const ext = fileName.split(".").pop().toLowerCase();
       let parsedContent = content;
 
-      if (ext === 'json') {
+      if (ext === "json") {
         try {
           parsedContent = JSON.parse(content);
         } catch (e) {
           // Keep as string if not valid JSON
         }
-      } else if (ext === 'csv') {
+      } else if (ext === "csv") {
         // For CSV, split into lines for preview
-        const lines = content.split('\n').slice(0, 10); // First 10 lines
+        const lines = content.split("\n").slice(0, 10); // First 10 lines
         parsedContent = {
           preview: lines,
-          totalLines: content.split('\n').length,
-          isPreview: content.split('\n').length > 10
+          totalLines: content.split("\n").length,
+          isPreview: content.split("\n").length > 10,
         };
       }
 
@@ -1549,15 +1600,15 @@ export function createBrowserUseRoutes(
           ...file,
           content: parsedContent,
           contentType: ext,
-          size: content.length
-        }
+          size: content.length,
+        },
       });
     } catch (error) {
       logger.error("❌ Failed to preview file:", error);
       res.status(500).json({
         success: false,
         error: error.message,
-        type: "preview-error"
+        type: "preview-error",
       });
     }
   });
@@ -1567,31 +1618,31 @@ export function createBrowserUseRoutes(
     try {
       const { fileName } = req.params;
       const files = browserUseService.getDownloadedFiles();
-      const file = files.find(f => f.fileName === fileName);
+      const file = files.find((f) => f.fileName === fileName);
 
       if (!file) {
         return res.status(404).json({
           success: false,
           error: "File not found",
-          type: "file-not-found"
+          type: "file-not-found",
         });
       }
 
       // Delete file
-      const fs = await import('fs');
+      const fs = await import("fs");
       fs.unlinkSync(file.filePath);
 
       logger.info(`🗑️ Deleted file: ${fileName}`);
       res.json({
         success: true,
-        message: `File ${fileName} deleted successfully`
+        message: `File ${fileName} deleted successfully`,
       });
     } catch (error) {
       logger.error("❌ Failed to delete file:", error);
       res.status(500).json({
         success: false,
         error: error.message,
-        type: "delete-error"
+        type: "delete-error",
       });
     }
   });
@@ -1894,6 +1945,51 @@ function generateExecutionSummary(taskId, service) {
     steps: steps,
     summary: `Task completed with ${steps.length} steps`,
   };
+}
+
+/**
+ * Generate file tracking performance recommendations
+ */
+function generateFileTrackingRecommendations(stats) {
+  const recommendations = [];
+
+  if (stats.expiredFiles > 10) {
+    recommendations.push({
+      type: "cleanup",
+      priority: "high",
+      message: `${stats.expiredFiles} expired file entries found. Consider running manual cleanup.`,
+      action: "POST /api/browser-use/cleanup/files",
+    });
+  }
+
+  if (stats.memoryUsageKB > 1000) {
+    recommendations.push({
+      type: "memory",
+      priority: "medium",
+      message: `File tracking using ${stats.memoryUsageKB}KB memory. Consider reducing TTL.`,
+      action: "Reduce fileTrackingTTL configuration",
+    });
+  }
+
+  if (stats.totalSessions > 50) {
+    recommendations.push({
+      type: "sessions",
+      priority: "low",
+      message: `${stats.totalSessions} active sessions tracked. Monitor for memory usage.`,
+      action: "Regular monitoring recommended",
+    });
+  }
+
+  if (stats.oldestEntry && stats.oldestEntry.ageHours > 48) {
+    recommendations.push({
+      type: "stale_data",
+      priority: "medium",
+      message: `Oldest entry is ${stats.oldestEntry.ageHours}h old. Cleanup may be needed.`,
+      action: "Check cleanup intervals",
+    });
+  }
+
+  return recommendations;
 }
 
 /**

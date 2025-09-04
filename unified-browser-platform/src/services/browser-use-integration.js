@@ -59,28 +59,63 @@ export class BrowserUseIntegrationService extends EventEmitter {
     this.taskQueue = [];
     this.runningTasks = new Set();
 
-    // File upload tracking
+    // File upload tracking with automatic cleanup
     this.uploadedFiles = new Map(); // Track uploaded files per execution/session
     this.pendingDownloads = new Map(); // Track pending file downloads by executionId_sessionId
+    this.fileTrackingTTL = 24 * 60 * 60 * 1000; // 24 hours TTL for file tracking
 
     // Set up event listeners for file tracking
-    this.on('fileDownloaded', (event) => {
+    this.on("fileDownloaded", (event) => {
       if (event.uploadResult) {
         const key = `${event.executionId}_${event.sessionId}`;
         if (!this.uploadedFiles.has(key)) {
           this.uploadedFiles.set(key, []);
         }
-        this.uploadedFiles.get(key).push({
-          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          fileName: event.fileName,
-          url: event.uploadResult.url,
-          size: event.uploadResult.size,
-          provider: event.uploadResult.provider,
-          uploadedAt: event.timestamp,
-          localPath: event.filePath
-        });
+
+        // Check for duplicates before adding (optimized check)
+        const existingFiles = this.uploadedFiles.get(key);
+        const isDuplicate = existingFiles.some(
+          (file) =>
+            file.fileName === event.fileName &&
+            file.url === event.uploadResult.url,
+        );
+
+        if (!isDuplicate) {
+          const fileEntry = {
+            id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            fileName: event.fileName,
+            url: event.uploadResult.url,
+            size: event.uploadResult.size,
+            provider: event.uploadResult.provider,
+            uploadedAt: event.timestamp || new Date().toISOString(),
+            localPath: event.filePath,
+            createdAt: Date.now(), // Add timestamp for TTL cleanup
+          };
+
+          this.uploadedFiles.get(key).push(fileEntry);
+          this.logger.info(
+            `📁 File tracked: ${event.fileName} -> ${event.uploadResult.url}`,
+          );
+
+          // Schedule cleanup for this entry
+          this.scheduleFileCleanup(key, fileEntry.id);
+        } else {
+          this.logger.info(`📁 Duplicate file ignored: ${event.fileName}`);
+        }
       }
     });
+
+    // Start periodic cleanup of old file tracking data
+    this.startFileTrackingCleanup();
+
+    // Error handling for critical events
+    this.on("error", (error) => {
+      this.logger.error("🚨 Critical error in BrowserUseIntegration:", error);
+    });
+
+    // Graceful shutdown cleanup
+    process.on("SIGTERM", () => this.gracefulShutdown());
+    process.on("SIGINT", () => this.gracefulShutdown());
 
     this.logger.info(
       "🔧 Concurrent execution configuration:",
@@ -248,7 +283,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
         this.logger.info(`📁 Downloads folder exists: ${this.downloadsPath}`);
       }
     } catch (error) {
-      this.logger.error(`❌ Failed to create downloads folder: ${error.message}`);
+      this.logger.error(
+        `❌ Failed to create downloads folder: ${error.message}`,
+      );
     }
   }
 
@@ -260,15 +297,18 @@ export class BrowserUseIntegrationService extends EventEmitter {
       // Ensure downloads folder exists
       this.ensureDownloadsFolder();
 
+      // Sanitize filename by removing invalid characters for Windows/Unix
+      const sanitizedFileName = fileName.replace(/[<>:"/\\|?*]/g, "_");
+
       // Add timestamp to avoid file conflicts
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const sessionPrefix = sessionId ? `${sessionId.slice(0, 8)}_` : '';
-      const finalFileName = `${sessionPrefix}${timestamp}_${fileName}`;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const sessionPrefix = sessionId ? `${sessionId.slice(0, 8)}_` : "";
+      const finalFileName = `${sessionPrefix}${timestamp}_${sanitizedFileName}`;
       const filePath = path.join(this.downloadsPath, finalFileName);
 
       // Write the file
-      fs.writeFileSync(filePath, content, 'utf8');
-      
+      fs.writeFileSync(filePath, content, "utf8");
+
       this.logger.info(`📥 File downloaded: ${finalFileName}`);
       this.logger.info(`📂 Full path: ${filePath}`);
 
@@ -278,14 +318,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
         filePath: filePath,
         relativePath: `downloads/${finalFileName}`,
         size: content.length,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      this.logger.error(`❌ Failed to download file ${fileName}: ${error.message}`);
+      this.logger.error(
+        `❌ Failed to download file ${fileName}: ${error.message}`,
+      );
       return {
         success: false,
         error: error.message,
-        fileName: fileName
+        fileName: fileName,
       };
     }
   }
@@ -300,18 +342,20 @@ export class BrowserUseIntegrationService extends EventEmitter {
       }
 
       const files = fs.readdirSync(this.downloadsPath);
-      return files.map(file => {
-        const filePath = path.join(this.downloadsPath, file);
-        const stats = fs.statSync(filePath);
-        return {
-          fileName: file,
-          filePath: filePath,
-          relativePath: `downloads/${file}`,
-          size: stats.size,
-          createdAt: stats.birthtime,
-          modifiedAt: stats.mtime
-        };
-      }).sort((a, b) => b.createdAt - a.createdAt); // Most recent first
+      return files
+        .map((file) => {
+          const filePath = path.join(this.downloadsPath, file);
+          const stats = fs.statSync(filePath);
+          return {
+            fileName: file,
+            filePath: filePath,
+            relativePath: `downloads/${file}`,
+            size: stats.size,
+            createdAt: stats.birthtime,
+            modifiedAt: stats.mtime,
+          };
+        })
+        .sort((a, b) => b.createdAt - a.createdAt); // Most recent first
     } catch (error) {
       this.logger.error(`❌ Failed to get downloaded files: ${error.message}`);
       return [];
@@ -736,12 +780,19 @@ export class BrowserUseIntegrationService extends EventEmitter {
             if (this.pendingDownloads.has(downloadKey)) {
               const pendingDownloads = this.pendingDownloads.get(downloadKey);
               if (pendingDownloads.length > 0) {
-                this.logger.info(`⏳ Waiting for ${pendingDownloads.length} pending file downloads to complete...`);
+                this.logger.info(
+                  `⏳ Waiting for ${pendingDownloads.length} pending file downloads to complete...`,
+                );
                 try {
                   await Promise.all(pendingDownloads);
-                  this.logger.info(`✅ All file downloads completed for ${executionId}`);
+                  this.logger.info(
+                    `✅ All file downloads completed for ${executionId}`,
+                  );
                 } catch (downloadError) {
-                  this.logger.warn(`⚠️ Some file downloads failed for ${executionId}:`, downloadError.message);
+                  this.logger.warn(
+                    `⚠️ Some file downloads failed for ${executionId}:`,
+                    downloadError.message,
+                  );
                 }
                 // Clean up pending downloads tracking
                 this.pendingDownloads.delete(downloadKey);
@@ -1209,19 +1260,39 @@ export class BrowserUseIntegrationService extends EventEmitter {
         const match = logLine.match(pattern);
         if (match) {
           const fullPath = match[1];
-          this.logger.info(`🔍 Detected attachment with full path: ${fullPath}`);
-          
+          this.logger.info(
+            `🔍 Detected attachment with full path: ${fullPath}`,
+          );
+
           // Track pending download
           const downloadKey = `${executionId}_${sessionId}`;
           if (!this.pendingDownloads.has(downloadKey)) {
             this.pendingDownloads.set(downloadKey, []);
           }
-          
-          const downloadPromise = this.downloadFileFromFullPath(fullPath, executionId, sessionId)
-            .then(() => ({ fileName: fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath, success: true }))
-            .catch(error => ({ fileName: fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath, success: false, error }));
-            
-          downloadPromise.fileName = fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath;
+
+          const downloadPromise = this.downloadFileFromFullPath(
+            fullPath,
+            executionId,
+            sessionId,
+          )
+            .then(() => ({
+              fileName:
+                fullPath.split("/").pop() ||
+                fullPath.split("\\").pop() ||
+                fullPath,
+              success: true,
+            }))
+            .catch((error) => ({
+              fileName:
+                fullPath.split("/").pop() ||
+                fullPath.split("\\").pop() ||
+                fullPath,
+              success: false,
+              error,
+            }));
+
+          downloadPromise.fileName =
+            fullPath.split("/").pop() || fullPath.split("\\").pop() || fullPath;
           this.pendingDownloads.get(downloadKey).push(downloadPromise);
           break;
         }
@@ -1232,7 +1303,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         if (match) {
           const fileName = match[1];
           this.logger.info(`🔍 Detected file creation: ${fileName}`);
-          
+
           // Try to read the file content from subsequent log lines
           await this.scheduleFileDownload(fileName, executionId, sessionId);
           break;
@@ -1245,13 +1316,12 @@ export class BrowserUseIntegrationService extends EventEmitter {
         if (match) {
           const fileName = match[1];
           this.logger.info(`🔍 Detected file content available: ${fileName}`);
-          
+
           // Schedule for content extraction
           await this.scheduleFileDownload(fileName, executionId, sessionId);
           break;
         }
       }
-
     } catch (error) {
       this.logger.error(`❌ Error in file detection: ${error.message}`);
     }
@@ -1264,11 +1334,11 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Track pending downloads per execution/session
     const downloadKey = `${executionId}_${sessionId}`;
     const individualKey = `${sessionId}_${fileName}`;
-    
+
     // Avoid duplicate downloads
     if (this.pendingDownloads.has(downloadKey)) {
       const existingDownloads = this.pendingDownloads.get(downloadKey);
-      if (existingDownloads.some(p => p.fileName === fileName)) {
+      if (existingDownloads.some((p) => p.fileName === fileName)) {
         return;
       }
     }
@@ -1286,7 +1356,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
           await this.attemptFileDownload(fileName, executionId, sessionId);
           resolve({ fileName, success: true });
         } catch (error) {
-          this.logger.error(`❌ Failed to download ${fileName}: ${error.message}`);
+          this.logger.error(
+            `❌ Failed to download ${fileName}: ${error.message}`,
+          );
           resolve({ fileName, success: false, error });
         }
       }, 2000); // Wait 2 seconds for file to be written
@@ -1305,13 +1377,18 @@ export class BrowserUseIntegrationService extends EventEmitter {
   async attemptFileDownload(fileName, executionId, sessionId) {
     try {
       // Import required modules for ES module compatibility
-      const osModule = await import('os');
-      const fsModule = await import('fs');
-      
+      const osModule = await import("os");
+      const fsModule = await import("fs");
+
       // Try different possible locations for the file
-      const tempDir = process.env.TEMP || process.env.TMP || '/tmp';
-      const userTempDir = path.join(osModule.homedir(), 'AppData', 'Local', 'Temp');
-      
+      const tempDir = process.env.TEMP || process.env.TMP || "/tmp";
+      const userTempDir = path.join(
+        osModule.homedir(),
+        "AppData",
+        "Local",
+        "Temp",
+      );
+
       const possiblePaths = [
         // Python agent working directory
         path.join(this.projectRoot, fileName),
@@ -1331,8 +1408,10 @@ export class BrowserUseIntegrationService extends EventEmitter {
       // Add wildcard search for browser_use_agent_* directories in temp
       try {
         // Use dynamic import for glob since we're in ES module
-        const { glob } = await import('glob');
-        const tempBrowserUseDirs = await glob(path.join(userTempDir, 'browser_use_agent_*').replace(/\\/g, '/'));
+        const { glob } = await import("glob");
+        const tempBrowserUseDirs = await glob(
+          path.join(userTempDir, "browser_use_agent_*").replace(/\\/g, "/"),
+        );
         for (const tempDir of tempBrowserUseDirs) {
           possiblePaths.push(path.join(tempDir, fileName));
         }
@@ -1341,7 +1420,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         try {
           const tempFiles = fsModule.readdirSync(userTempDir);
           for (const dirName of tempFiles) {
-            if (dirName.startsWith('browser_use_agent_')) {
+            if (dirName.startsWith("browser_use_agent_")) {
               const tempDirPath = path.join(userTempDir, dirName);
               if (fsModule.statSync(tempDirPath).isDirectory()) {
                 possiblePaths.push(path.join(tempDirPath, fileName));
@@ -1349,7 +1428,9 @@ export class BrowserUseIntegrationService extends EventEmitter {
             }
           }
         } catch (searchError) {
-          this.logger.warn(`Could not search temp directories: ${searchError.message}`);
+          this.logger.warn(
+            `Could not search temp directories: ${searchError.message}`,
+          );
         }
       }
 
@@ -1359,7 +1440,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
       for (const filePath of possiblePaths) {
         try {
           if (fsModule.existsSync(filePath)) {
-            fileContent = fsModule.readFileSync(filePath, 'utf8');
+            fileContent = fsModule.readFileSync(filePath, "utf8");
             sourceFilePath = filePath;
             this.logger.info(`📁 Found file at: ${filePath}`);
             break;
@@ -1372,39 +1453,31 @@ export class BrowserUseIntegrationService extends EventEmitter {
 
       if (fileContent !== null) {
         // Download the file to our downloads folder
-        const downloadResult = await this.downloadFile(fileName, fileContent, sessionId);
-        
+        const downloadResult = await this.downloadFile(
+          fileName,
+          fileContent,
+          sessionId,
+        );
+
         if (downloadResult.success) {
           this.logger.info(`📥 Successfully downloaded: ${fileName}`);
           this.logger.info(`📂 Downloaded to: ${downloadResult.filePath}`);
 
           // Upload to file manager and get shareable URL - WAIT for completion
           const uploadResult = await this.uploadFileToFileManager(
-            downloadResult.filePath, 
-            downloadResult.fileName, 
-            sessionId
+            downloadResult.filePath,
+            downloadResult.fileName,
+            sessionId,
           );
 
-          // Track uploaded file IMMEDIATELY for result inclusion
+          // File tracking is handled by the 'fileDownloaded' event listener
           if (uploadResult.success) {
-            const uploadedFilesKey = `${executionId}_${sessionId}`;
-            if (!this.uploadedFiles.has(uploadedFilesKey)) {
-              this.uploadedFiles.set(uploadedFilesKey, []);
-            }
-            
-            // Add the uploaded file info to tracking SYNCHRONOUSLY
-            this.uploadedFiles.get(uploadedFilesKey).push({
-              id: uploadResult.url.split('/').pop().split('.')[0], // Extract file ID from URL
-              fileName: downloadResult.fileName,
-              url: uploadResult.url,
-              size: uploadResult.size,
-              provider: uploadResult.provider,
-              uploadedAt: new Date().toISOString(),
-              localPath: downloadResult.filePath
-            });
-
-            this.logger.info(`📋 IMMEDIATELY tracked uploaded file: ${fileName} -> ${uploadResult.url}`);
-            console.log(`📋 [FILE TRACKING] ${fileName} IMMEDIATELY tracked for inclusion in API result`);
+            this.logger.info(
+              `📋 File upload successful: ${fileName} -> ${uploadResult.url}`,
+            );
+            console.log(
+              `📋 [FILE TRACKING] ${fileName} will be tracked via event listener`,
+            );
           }
 
           // Emit download event with upload result (this now happens after tracking)
@@ -1417,32 +1490,48 @@ export class BrowserUseIntegrationService extends EventEmitter {
             size: downloadResult.size,
             originalPath: sourceFilePath,
             timestamp: downloadResult.timestamp,
-            uploadResult: uploadResult.success ? {
-              url: uploadResult.url,
-              size: uploadResult.size,
-              provider: uploadResult.provider
-            } : null,
-            uploadError: uploadResult.success ? null : uploadResult.error
+            uploadResult: uploadResult.success
+              ? {
+                  url: uploadResult.url,
+                  size: uploadResult.size,
+                  provider: uploadResult.provider,
+                }
+              : null,
+            uploadError: uploadResult.success ? null : uploadResult.error,
           });
 
           // Log success for user visibility
-          console.log(`📥 [FILE DOWNLOAD] ${downloadResult.fileName} saved to downloads folder`);
-          console.log(`📂 [FILE DOWNLOAD] Path: ${downloadResult.relativePath}`);
-          
+          console.log(
+            `📥 [FILE DOWNLOAD] ${downloadResult.fileName} saved to downloads folder`,
+          );
+          console.log(
+            `📂 [FILE DOWNLOAD] Path: ${downloadResult.relativePath}`,
+          );
+
           if (uploadResult.success) {
-            console.log(`🌐 [FILE UPLOAD] ${downloadResult.fileName} uploaded: ${uploadResult.url}`);
+            console.log(
+              `🌐 [FILE UPLOAD] ${downloadResult.fileName} uploaded: ${uploadResult.url}`,
+            );
           } else {
-            console.log(`❌ [FILE UPLOAD] Failed to upload ${downloadResult.fileName}: ${uploadResult.error}`);
+            console.log(
+              `❌ [FILE UPLOAD] Failed to upload ${downloadResult.fileName}: ${uploadResult.error}`,
+            );
           }
         } else {
-          this.logger.error(`❌ Failed to download ${fileName}: ${downloadResult.error}`);
+          this.logger.error(
+            `❌ Failed to download ${fileName}: ${downloadResult.error}`,
+          );
         }
       } else {
-        this.logger.warn(`⚠️ Could not find file: ${fileName} in any expected location`);
+        this.logger.warn(
+          `⚠️ Could not find file: ${fileName} in any expected location`,
+        );
         this.logger.info(`🔍 Searched paths:`, possiblePaths);
       }
     } catch (error) {
-      this.logger.error(`❌ Error downloading file ${fileName}: ${error.message}`);
+      this.logger.error(
+        `❌ Error downloading file ${fileName}: ${error.message}`,
+      );
     }
   }
 
@@ -1452,52 +1541,71 @@ export class BrowserUseIntegrationService extends EventEmitter {
   async uploadFileToFileManager(filePath, fileName, sessionId) {
     try {
       // Import form-data dynamically since we're using ES modules
-      const FormData = (await import('form-data')).default;
-      const fetch = (await import('node-fetch')).default;
-      
+      const FormData = (await import("form-data")).default;
+      const fetch = (await import("node-fetch")).default;
+
       const form = new FormData();
-      
+
       // Create a readable stream from the file
       const fileStream = fs.createReadStream(filePath);
-      form.append('file', fileStream, fileName);
-      form.append('filepath', `browser_use_outputs/${sessionId}`);
-      
-      const response = await fetch('https://vanijapp.adya.ai/api/v1/vanij/gateway/file_manager/internal/upload', {
-        method: 'POST',
-        body: form,
-        headers: form.getHeaders()
-      });
+      form.append("file", fileStream, fileName);
+      form.append("filepath", `browser_use_outputs/${sessionId}`);
 
-      console.log("UPLOADED RESPONSE========",response)
-      
+      const response = await fetch(
+        "https://vanijapp.adya.ai/api/v1/vanij/gateway/file_manager/internal/upload",
+        {
+          method: "POST",
+          body: form,
+          headers: form.getHeaders(),
+        },
+      );
+
+      console.log("UPLOADED RESPONSE========", response);
+
       if (response.ok) {
         const result = await response.json();
         if (result.meta.status && result.data.url) {
           this.logger.info(`🌐 File uploaded successfully: ${result.data.url}`);
-          
+
           // AUTO-CLEANUP: Delete local file after successful upload
           try {
             fs.unlinkSync(filePath);
             this.logger.info(`🗑️ Local file deleted after upload: ${fileName}`);
-            console.log(`🗑️ [FILE CLEANUP] ${fileName} deleted from downloads folder after successful upload`);
+            console.log(
+              `🗑️ [FILE CLEANUP] ${fileName} deleted from downloads folder after successful upload`,
+            );
           } catch (deleteError) {
-            this.logger.warn(`⚠️ Failed to delete local file after upload: ${deleteError.message}`);
-            console.log(`⚠️ [FILE CLEANUP] Failed to delete ${fileName}: ${deleteError.message}`);
+            this.logger.warn(
+              `⚠️ Failed to delete local file after upload: ${deleteError.message}`,
+            );
+            console.log(
+              `⚠️ [FILE CLEANUP] Failed to delete ${fileName}: ${deleteError.message}`,
+            );
           }
-          
+
           return {
             success: true,
             url: result.data.url,
             size: result.data.size,
-            provider: result.data.provider
+            provider: result.data.provider,
           };
         } else {
-          this.logger.error(`❌ Upload failed: ${result.meta.message || 'Unknown error'}`);
-          return { success: false, error: result.meta.message || 'Upload failed' };
+          this.logger.error(
+            `❌ Upload failed: ${result.meta.message || "Unknown error"}`,
+          );
+          return {
+            success: false,
+            error: result.meta.message || "Upload failed",
+          };
         }
       } else {
-        this.logger.error(`❌ Upload request failed: ${response.status} ${response.statusText}`);
-        return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+        this.logger.error(
+          `❌ Upload request failed: ${response.status} ${response.statusText}`,
+        );
+        return {
+          success: false,
+          error: `HTTP ${response.status}: ${response.statusText}`,
+        };
       }
     } catch (error) {
       this.logger.error(`❌ Error uploading file: ${error.message}`);
@@ -1509,7 +1617,10 @@ export class BrowserUseIntegrationService extends EventEmitter {
    * Helper method to get basename without requiring path module
    */
   getBaseName(fullPath) {
-    return fullPath.split('/').pop() || fullPath.split('\\').pop() || fullPath;
+    // Handle both Unix-style (/) and Windows-style (\) path separators
+    const normalizedPath = fullPath.replace(/\\/g, "/");
+    const baseName = normalizedPath.split("/").pop();
+    return baseName || fullPath;
   }
 
   /**
@@ -1519,7 +1630,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
     try {
       const fileName = this.getBaseName(fullPath);
       const downloadKey = `${executionId}_${sessionId}`;
-      
+
       // Track this download in the pending downloads Map
       if (!this.pendingDownloads.has(downloadKey)) {
         this.pendingDownloads.set(downloadKey, []);
@@ -1527,49 +1638,43 @@ export class BrowserUseIntegrationService extends EventEmitter {
 
       try {
         // Import modules using dynamic import for ES module compatibility
-        const fsModule = await import('fs');
-        const pathModule = await import('path');
-        
+        const fsModule = await import("fs");
+        const pathModule = await import("path");
+
         // Check if file exists at the full path
         if (fsModule.existsSync(fullPath)) {
-          const fileContent = fsModule.readFileSync(fullPath, 'utf8');
-          
+          const fileContent = fsModule.readFileSync(fullPath, "utf8");
+
           this.logger.info(`📁 Found attachment file at: ${fullPath}`);
-          
+
           // Download the file to our downloads folder
-          const downloadResult = await this.downloadFile(fileName, fileContent, sessionId);
-          
+          const downloadResult = await this.downloadFile(
+            fileName,
+            fileContent,
+            sessionId,
+          );
+
           if (downloadResult.success) {
-            this.logger.info(`📥 Successfully downloaded attachment: ${fileName}`);
+            this.logger.info(
+              `📥 Successfully downloaded attachment: ${fileName}`,
+            );
             this.logger.info(`📂 Downloaded to: ${downloadResult.filePath}`);
 
             // Upload to file manager and get shareable URL - WAIT for completion
             const uploadResult = await this.uploadFileToFileManager(
-              downloadResult.filePath, 
-              downloadResult.fileName, 
-              sessionId
+              downloadResult.filePath,
+              downloadResult.fileName,
+              sessionId,
             );
 
             // Track uploaded file IMMEDIATELY for result inclusion
             if (uploadResult.success) {
-              const uploadedFilesKey = `${executionId}_${sessionId}`;
-              if (!this.uploadedFiles.has(uploadedFilesKey)) {
-                this.uploadedFiles.set(uploadedFilesKey, []);
-              }
-              
-              // Add the uploaded file info to tracking SYNCHRONOUSLY
-              this.uploadedFiles.get(uploadedFilesKey).push({
-                id: uploadResult.url.split('/').pop().split('.')[0], // Extract file ID from URL
-                fileName: downloadResult.fileName,
-                url: uploadResult.url,
-                size: uploadResult.size,
-                provider: uploadResult.provider,
-                uploadedAt: new Date().toISOString(),
-                localPath: downloadResult.filePath
-              });
-
-              this.logger.info(`📋 IMMEDIATELY tracked uploaded file: ${fileName} -> ${uploadResult.url}`);
-              console.log(`📋 [FILE TRACKING] ${fileName} IMMEDIATELY tracked for inclusion in API result`);
+              this.logger.info(
+                `📋 File upload successful: ${fileName} -> ${uploadResult.url}`,
+              );
+              console.log(
+                `📋 [FILE TRACKING] ${fileName} will be tracked via event listener`,
+              );
             }
 
             // Emit download event with upload result (this now happens after tracking)
@@ -1582,40 +1687,56 @@ export class BrowserUseIntegrationService extends EventEmitter {
               size: downloadResult.size,
               originalPath: fullPath,
               timestamp: downloadResult.timestamp,
-              type: 'attachment',
-              uploadResult: uploadResult.success ? {
-                url: uploadResult.url,
-                size: uploadResult.size,
-                provider: uploadResult.provider
-              } : null,
-              uploadError: uploadResult.success ? null : uploadResult.error
+              type: "attachment",
+              uploadResult: uploadResult.success
+                ? {
+                    url: uploadResult.url,
+                    size: uploadResult.size,
+                    provider: uploadResult.provider,
+                  }
+                : null,
+              uploadError: uploadResult.success ? null : uploadResult.error,
             });
 
             // Log success for user visibility
-            console.log(`📥 [ATTACHMENT DOWNLOAD] ${downloadResult.fileName} saved to downloads folder`);
-            console.log(`📂 [ATTACHMENT DOWNLOAD] Path: ${downloadResult.relativePath}`);
-            
+            console.log(
+              `📥 [ATTACHMENT DOWNLOAD] ${downloadResult.fileName} saved to downloads folder`,
+            );
+            console.log(
+              `📂 [ATTACHMENT DOWNLOAD] Path: ${downloadResult.relativePath}`,
+            );
+
             if (uploadResult.success) {
-              console.log(`🌐 [FILE UPLOAD] ${downloadResult.fileName} uploaded: ${uploadResult.url}`);
+              console.log(
+                `🌐 [FILE UPLOAD] ${downloadResult.fileName} uploaded: ${uploadResult.url}`,
+              );
             } else {
-              console.log(`❌ [FILE UPLOAD] Failed to upload ${downloadResult.fileName}: ${uploadResult.error}`);
+              console.log(
+                `❌ [FILE UPLOAD] Failed to upload ${downloadResult.fileName}: ${uploadResult.error}`,
+              );
             }
           } else {
-            this.logger.error(`❌ Failed to download attachment ${fileName}: ${downloadResult.error}`);
+            this.logger.error(
+              `❌ Failed to download attachment ${fileName}: ${downloadResult.error}`,
+            );
           }
         } else {
           this.logger.warn(`⚠️ Attachment file not found at: ${fullPath}`);
         }
       } catch (innerError) {
-        this.logger.error(`❌ Error processing attachment ${fileName}: ${innerError.message}`);
+        this.logger.error(
+          `❌ Error processing attachment ${fileName}: ${innerError.message}`,
+        );
       }
     } catch (error) {
-      this.logger.error(`❌ Error downloading attachment from ${fullPath}: ${error.message}`);
+      this.logger.error(
+        `❌ Error downloading attachment from ${fullPath}: ${error.message}`,
+      );
     }
   }
 
   /**
-   * Parse the final result from agent output
+   * Parse the final result from agent output with enhanced file tracking
    */
   parseAgentResult(stdout, executionId, sessionId, executionTime) {
     const lines = stdout.trim().split("\n");
@@ -1638,29 +1759,43 @@ export class BrowserUseIntegrationService extends EventEmitter {
     // Parse token usage from the output
     const tokenUsage = this.parseTokenUsage(stdout, executionId);
 
-    // Get uploaded files for this execution
+    // Get uploaded files for this execution with enhanced tracking
     const uploadedFilesKey = `${executionId}_${sessionId}`;
     const uploadedFiles = this.uploadedFiles.get(uploadedFilesKey) || [];
-    const outputFiles = uploadedFiles.map(file => ({
+    const outputFiles = uploadedFiles.map((file) => ({
       id: file.id,
       fileName: file.fileName,
-      url: file.url
+      url: file.url,
+      size: file.size,
+      uploadedAt: file.uploadedAt,
+      provider: file.provider,
     }));
 
-    // Debug logging for file tracking
+    // Enhanced debug logging for file tracking
     this.logger.info(`🔍 Parsing agent result for ${executionId}`, {
       stdoutLength: stdout.length,
       hasJsonResult: !!resultJson,
       uploadedFilesKey,
       uploadedFilesCount: uploadedFiles.length,
       outputFilesCount: outputFiles.length,
-      uploadedFilesKeys: Array.from(this.uploadedFiles.keys())
+      uploadedFilesKeys: Array.from(this.uploadedFiles.keys()),
+      fileTrackingStats: this.getFileTrackingStats(),
     });
 
     if (outputFiles.length > 0) {
-      this.logger.info(`📋 Found ${outputFiles.length} output files for result:`, outputFiles);
+      this.logger.info(
+        `📋 Found ${outputFiles.length} output files for result:`,
+        outputFiles.map((f) => ({
+          fileName: f.fileName,
+          url: f.url,
+          size: f.size,
+        })),
+      );
     } else {
-      this.logger.warn(`⚠️ No output files found for ${uploadedFilesKey}. Available keys:`, Array.from(this.uploadedFiles.keys()));
+      this.logger.warn(
+        `⚠️ No output files found for ${uploadedFilesKey}. Available keys:`,
+        Array.from(this.uploadedFiles.keys()),
+      );
     }
 
     if (resultJson) {
@@ -1681,7 +1816,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         token_usage: tokenUsage,
         live_url: liveUrl,
         live_url_embed: `<iframe src="${liveUrl}" width="100%" height="600px"></iframe>`,
-        outputFiles: outputFiles
+        outputFiles: outputFiles,
       };
     } else {
       // If no JSON result found, but the process completed successfully (code 0),
@@ -1724,7 +1859,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         live_url_embed: `<iframe src="${liveUrl}" width="100%" height="600px"></iframe>`,
         stdout: stdout.substring(0, 1000), // Include first 1000 chars of stdout for debugging
         note: "Result created from successful process completion without JSON output",
-        outputFiles: outputFiles
+        outputFiles: outputFiles,
       };
     }
   }
@@ -2166,8 +2301,157 @@ export class BrowserUseIntegrationService extends EventEmitter {
   cleanupUploadedFilesData(executionId, sessionId) {
     const key = `${executionId}_${sessionId}`;
     if (this.uploadedFiles.has(key)) {
+      const files = this.uploadedFiles.get(key);
+      this.logger.info(
+        `🗑️ Cleaning up ${files.length} uploaded files for ${key}`,
+      );
       this.uploadedFiles.delete(key);
-      this.logger.info(`🧹 Cleaned up uploaded files data for ${key}`);
+    }
+  }
+
+  /**
+   * Start periodic cleanup of old file tracking data
+   */
+  startFileTrackingCleanup() {
+    // Run cleanup every hour
+    this.fileCleanupInterval = setInterval(
+      () => {
+        this.cleanupExpiredFileTracking();
+      },
+      60 * 60 * 1000,
+    ); // 1 hour
+
+    this.logger.info("🔄 Started automatic file tracking cleanup (TTL: 24h)");
+  }
+
+  /**
+   * Clean up expired file tracking entries
+   */
+  cleanupExpiredFileTracking() {
+    const now = Date.now();
+    let totalCleaned = 0;
+
+    for (const [key, files] of this.uploadedFiles.entries()) {
+      const validFiles = files.filter((file) => {
+        const age = now - (file.createdAt || 0);
+        return age < this.fileTrackingTTL;
+      });
+
+      const cleanedCount = files.length - validFiles.length;
+      if (cleanedCount > 0) {
+        if (validFiles.length === 0) {
+          this.uploadedFiles.delete(key);
+        } else {
+          this.uploadedFiles.set(key, validFiles);
+        }
+        totalCleaned += cleanedCount;
+      }
+    }
+
+    if (totalCleaned > 0) {
+      this.logger.info(
+        `🧹 Cleaned up ${totalCleaned} expired file tracking entries`,
+      );
+    }
+  }
+
+  /**
+   * Schedule cleanup for a specific file entry
+   */
+  scheduleFileCleanup(key, fileId) {
+    setTimeout(() => {
+      if (this.uploadedFiles.has(key)) {
+        const files = this.uploadedFiles.get(key);
+        const filtered = files.filter((f) => f.id !== fileId);
+        if (filtered.length === 0) {
+          this.uploadedFiles.delete(key);
+        } else {
+          this.uploadedFiles.set(key, filtered);
+        }
+      }
+    }, this.fileTrackingTTL);
+  }
+
+  /**
+   * Get file tracking statistics
+   */
+  getFileTrackingStats() {
+    let totalFiles = 0;
+    let totalSessions = this.uploadedFiles.size;
+    const now = Date.now();
+    let expiredFiles = 0;
+
+    for (const [key, files] of this.uploadedFiles.entries()) {
+      totalFiles += files.length;
+      expiredFiles += files.filter(
+        (f) => now - (f.createdAt || 0) > this.fileTrackingTTL,
+      ).length;
+    }
+
+    return {
+      totalSessions,
+      totalFiles,
+      expiredFiles,
+      memoryUsageKB: Math.round(
+        JSON.stringify([...this.uploadedFiles]).length / 1024,
+      ),
+      oldestEntry: this.getOldestFileEntry(),
+    };
+  }
+
+  /**
+   * Get oldest file entry for monitoring
+   */
+  getOldestFileEntry() {
+    let oldest = null;
+    const now = Date.now();
+
+    for (const [key, files] of this.uploadedFiles.entries()) {
+      for (const file of files) {
+        const age = now - (file.createdAt || now);
+        if (!oldest || age > oldest.age) {
+          oldest = { age, key, fileName: file.fileName };
+        }
+      }
+    }
+
+    return oldest
+      ? {
+          ...oldest,
+          ageHours: Math.round(oldest.age / (60 * 60 * 1000)),
+        }
+      : null;
+  }
+
+  /**
+   * Graceful shutdown cleanup
+   */
+  async gracefulShutdown() {
+    this.logger.info("🔄 Starting graceful shutdown...");
+
+    try {
+      // Clear cleanup intervals
+      if (this.fileCleanupInterval) {
+        clearInterval(this.fileCleanupInterval);
+      }
+
+      // Stop all active agents
+      await this.stopAllAgents();
+
+      // Final cleanup of file tracking
+      this.cleanupExpiredFileTracking();
+
+      // Clear all tracking data
+      this.uploadedFiles.clear();
+      this.pendingDownloads.clear();
+
+      if (this.uploadCache) {
+        this.uploadCache.clear();
+      }
+
+      this.logger.info("✅ Graceful shutdown completed");
+    } catch (error) {
+      this.logger.error("❌ Error during graceful shutdown:", error);
     }
   }
 
