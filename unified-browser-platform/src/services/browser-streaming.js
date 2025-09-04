@@ -5,8 +5,10 @@
 
 import puppeteer from "puppeteer";
 import { EventEmitter } from "events";
+import os from "os";
 import { Logger } from "../utils/logger.js";
 import OptimizedTabDetection from "./optimized-tab-detection.js";
+import AdvancedStealthService from "./advanced-stealth.js";
 
 export class BrowserStreamingService extends EventEmitter {
   constructor() {
@@ -17,15 +19,9 @@ export class BrowserStreamingService extends EventEmitter {
 
     // Initialize optimized tab detection
     this.tabDetection = new OptimizedTabDetection(this.logger);
-
-    // Log environment info for debugging
-    this.logger.info(`🖥️ Platform: ${process.platform}`);
-    this.logger.info(
-      `🌐 Environment: ${process.env.NODE_ENV || "development"}`,
-    );
-    this.logger.info(
-      `🎯 Headless mode will be: ${process.platform === "linux" ? "new (Linux detected)" : "configurable"}`,
-    );
+    
+    // Initialize advanced stealth service
+    this.stealthService = new AdvancedStealthService(this.logger);
 
     // Start periodic cache cleanup
     setInterval(() => {
@@ -76,9 +72,8 @@ export class BrowserStreamingService extends EventEmitter {
       // Create a NEW browser instance for this session to enable true parallelism
       // Use less restrictive configuration for better compatibility
       const isProduction = process.env.NODE_ENV === "production";
-      const isLinux = process.platform === "linux";
       const browser = await puppeteer.launch({
-        headless: isProduction || isLinux ? "new" : false, // Always headless on Linux servers
+        headless: process.env.BROWSER_HEADLESS, // Allow non-headless in development
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
@@ -88,67 +83,81 @@ export class BrowserStreamingService extends EventEmitter {
         args: [
           "--remote-debugging-port=0", // Use random port
 
-          // Essential server args (keep these)
+          // Enhanced stealth arguments for anti-detection
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
+          
+          // Core anti-detection measures
+          "--disable-blink-features=AutomationControlled",
+          "--exclude-switches=enable-automation",
+          "--disable-client-side-phishing-detection",
+          "--disable-component-extensions-with-background-pages",
+          "--disable-ipc-flooding-protection",
+          "--enable-features=NetworkService,NetworkServiceLogging",
+          "--force-color-profile=srgb",
+          "--metrics-recording-only",
+          "--no-crash-upload",
+          "--no-report-upload",
+          "--disable-breakpad",
+          "--disable-domain-reliability",
+          "--use-mock-keychain",
 
-          // Essential for headless Linux servers
-          ...(isLinux
-            ? [
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-                "--run-all-compositor-stages-before-draw",
-                "--memory-pressure-off",
-              ]
-            : []),
+          // Enhanced stealth for social media platforms
+          "--disable-features=VizDisplayCompositor,TranslateUI,BlinkGenPropertyTrees",
+          "--disable-sync",
+          "--disable-translate",
+          "--disable-default-apps",
+          "--disable-component-update",
+          "--disable-extensions-file-access-check",
+          "--disable-extensions-http-throttling",
+          "--disable-field-trial-config",
+          "--aggressive-cache-discard",
+          "--disable-back-forward-cache",
 
-          // Less restrictive security (for better Instagram compatibility)
-          // "--disable-web-security", // REMOVED - can cause issues with Instagram
-          "--disable-features=VizDisplayCompositor",
-
-          // GPU and rendering (minimal restrictions)
-          isProduction || isLinux ? "--disable-gpu" : "", // Always disable GPU on Linux
-          "--use-gl=swiftshader",
-
-          // Window management
+          // Window and rendering optimizations
           `--window-size=${options.width || 1920},${options.height || 1200}`,
           "--window-position=0,0",
           "--force-device-scale-factor=1",
+          "--enable-webgl",
+          "--enable-accelerated-2d-canvas",
+          "--enable-gpu-rasterization",
+          isProduction ? "--disable-gpu" : "--use-gl=desktop",
 
-          // Performance optimizations (keep these)
+          // Performance and background optimizations
           "--disable-background-timer-throttling",
           "--disable-backgrounding-occluded-windows",
           "--disable-renderer-backgrounding",
+          "--disable-background-networking",
+          "--disable-plugins-discovery",
+          "--disable-preconnect",
+          "--max_old_space_size=4096",
 
-          // UI restrictions (minimal)
+          // UI and user experience
           "--hide-scrollbars",
           "--mute-audio",
           "--disable-notifications",
           "--disable-desktop-notifications",
+          "--disable-infobars",
+          "--disable-popup-blocking",
           "--autoplay-policy=no-user-gesture-required",
           "--no-first-run",
           "--no-default-browser-check",
           "--disable-hang-monitor",
           "--disable-prompt-on-repost",
+          "--disable-password-generation",
+          "--disable-password-manager-reauthentication",
 
-          // Reduce automation detection (but not completely hide)
-          "--disable-blink-features=AutomationControlled",
-          "--exclude-switches=enable-automation",
+          // Network and security (balanced for compatibility)
+          "--allow-running-insecure-content",
+          "--disable-site-isolation-trials",
 
-          // REMOVED RESTRICTIONS for better Instagram compatibility:
-          // "--disable-sync",
-          // "--disable-translate",
-          // "--disable-plugins",
-          // "--disable-extensions",
-          // "--disable-default-apps",
-          // "--disable-domain-reliability",
-          // "--disable-client-side-phishing-detection",
-          // "--disable-infobars",
-          // "--disable-popup-blocking",
+          // Linux-specific optimizations for server environments
+          ...(os.platform() === "linux" ? [
+            "--no-zygote",
+            "--disable-gpu-sandbox",
+            "--disable-software-rasterizer",
+          ] : []),
         ].filter((arg) => arg !== ""), // Remove empty args
       });
 
@@ -164,84 +173,133 @@ export class BrowserStreamingService extends EventEmitter {
 
       await page.setViewport(defaultViewport);
 
-      // Use a more recent and realistic user agent
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-      );
+      // Apply advanced stealth measures using the stealth service
+      this.logger.info(`🥷 Applying stealth mode for Instagram/LinkedIn compatibility...`);
+      
+      // Extract URL from options or use default Instagram URL for stealth context
+      const targetUrl = options.url || 'https://instagram.com';
+      const task = options.task || 'social media automation';
+      
+      try {
+        await this.stealthService.applyStealthMeasures(page, sessionId, targetUrl || task);
+        await this.stealthService.addHumanBehavior(page, sessionId, targetUrl || task);
+        this.logger.info(`✅ Advanced stealth mode applied successfully`);
+      } catch (stealthError) {
+        this.logger.warn(`⚠️ Stealth mode failed, falling back to basic measures:`, stealthError.message);
+        
+        // Fallback to basic stealth if advanced fails
+        await page.setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        );
 
-      // Set realistic headers that match a normal browser
-      await page.setExtraHTTPHeaders({
-        "Accept-Language": "en-US,en;q=0.9",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "max-age=0",
-        "Sec-Ch-Ua":
-          '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-      });
-
-      // Additional stealth measures for better Instagram compatibility
-      await page.evaluateOnNewDocument(() => {
-        // Remove webdriver property
-        Object.defineProperty(navigator, "webdriver", {
-          get: () => undefined,
+        // Set realistic headers that match a normal browser
+        await page.setExtraHTTPHeaders({
+          "Accept-Language": "en-US,en;q=0.9",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Cache-Control": "max-age=0",
+          "Sec-Ch-Ua":
+            '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+          "Sec-Ch-Ua-Mobile": "?0",
+          "Sec-Ch-Ua-Platform": '"Windows"',
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "none",
+          "Sec-Fetch-User": "?1",
+          "Upgrade-Insecure-Requests": "1",
         });
 
-        // Override plugins array to look more realistic
-        Object.defineProperty(navigator, "plugins", {
-          get: () => [1, 2, 3, 4, 5],
-        });
+        // Basic stealth measures
+        await page.evaluateOnNewDocument(() => {
+          // Remove webdriver property
+          Object.defineProperty(navigator, "webdriver", {
+            get: () => undefined,
+          });
 
-        // Override languages to be more realistic
-        Object.defineProperty(navigator, "languages", {
-          get: () => ["en-US", "en"],
-        });
+          // Override plugins array to look more realistic
+          Object.defineProperty(navigator, "plugins", {
+            get: () => [1, 2, 3, 4, 5],
+          });
 
-        // Make window.chrome look realistic
-        if (!window.chrome) {
-          window.chrome = {};
-        }
-        window.chrome.runtime = {
-          onConnect: null,
-          onMessage: null,
-        };
+          // Override languages to be more realistic
+          Object.defineProperty(navigator, "languages", {
+            get: () => ["en-US", "en"],
+          });
 
-        // Remove automation indicators
-        const originalQuery = window.document.querySelector;
-        window.document.querySelector = function (selector) {
-          if (
-            selector === "[automation-target]" ||
-            selector === ".browser-use-target" ||
-            selector === ".automation-highlight"
-          ) {
-            return null;
+          // Make window.chrome look realistic
+          if (!window.chrome) {
+            window.chrome = {};
           }
-          return originalQuery.call(document, selector);
-        };
-      });
+          window.chrome.runtime = {
+            onConnect: null,
+            onMessage: null,
+          };
+
+          // Remove automation indicators
+          const originalQuery = window.document.querySelector;
+          window.document.querySelector = function (selector) {
+            if (
+              selector === "[automation-target]" ||
+              selector === ".browser-use-target" ||
+              selector === ".automation-highlight"
+            ) {
+              return null;
+            }
+            return originalQuery.call(document, selector);
+          };
+        });
+      }
 
       // Navigate to initial page
       await page.goto("about:blank");
 
-      // Set up CDP session for streaming - using exact same setup as old implementation
-      const client = await page.target().createCDPSession();
-      this.logger.debug(`🔧 CDP session created for session ${sessionId}`);
+      // Set up CDP session for streaming with improved error handling and recovery
+      let client;
+      let maxRetries = 3;
+      for (let retry = 0; retry < maxRetries; retry++) {
+        try {
+          client = await page.target().createCDPSession();
+          this.logger.debug(`🔧 CDP session created for session ${sessionId} (attempt ${retry + 1})`);
 
-      await client.send("Page.enable");
-      this.logger.debug(`🔧 Page.enable sent for session ${sessionId}`);
+          // Enable CDP domains with timeout and error handling
+          await Promise.all([
+            client.send("Page.enable").catch(err => {
+              this.logger.warn(`Page.enable failed: ${err.message}`);
+              throw err;
+            }),
+            client.send("Runtime.enable").catch(err => {
+              this.logger.warn(`Runtime.enable failed: ${err.message}`);
+              throw err;
+            }),
+            client.send("DOM.enable").catch(err => {
+              this.logger.warn(`DOM.enable failed: ${err.message}`);
+              throw err;
+            }),
+            client.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(err => {
+              this.logger.debug(`Target.setAutoAttach failed: ${err.message}`);
+              // Non-critical, continue
+            })
+          ]);
 
-      await client.send("Runtime.enable");
-      this.logger.debug(`🔧 Runtime.enable sent for session ${sessionId}`);
-
-      await client.send("DOM.enable");
-      this.logger.debug(`🔧 DOM.enable sent for session ${sessionId}`);
+          this.logger.debug(`🔧 All CDP domains enabled for session ${sessionId}`);
+          break; // Success, exit retry loop
+        } catch (error) {
+          this.logger.warn(`CDP setup attempt ${retry + 1} failed: ${error.message}`);
+          if (client) {
+            try {
+              await client.detach();
+            } catch (detachError) {
+              // Ignore detach errors
+            }
+          }
+          if (retry === maxRetries - 1) {
+            throw new Error(`Failed to setup CDP session after ${maxRetries} attempts: ${error.message}`);
+          }
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1)));
+        }
+      }
 
       // Get the NEW browser's WebSocket endpoint
       const browserWSEndpoint = browser.wsEndpoint();
@@ -260,6 +318,10 @@ export class BrowserStreamingService extends EventEmitter {
         lastActivity: new Date(),
         mouseButtonState: new Set(), // Track pressed mouse buttons
         usingCentralizedBrowser: false, // Flag to indicate this session uses its own browser
+        // CDP session recovery
+        cdpRetryCount: 0,
+        lastCdpError: null,
+        cdpRecoveryInProgress: false,
         // Tab management
         tabs: new Map(), // Track all tabs: Map<targetId, {page, title, url, isActive}>
         activeTabId: null, // Currently active tab ID
@@ -286,13 +348,138 @@ export class BrowserStreamingService extends EventEmitter {
     }
   }
 
+  // **NEW: CDP Session Recovery Method**
+  async recoverCdpSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.cdpRecoveryInProgress) {
+      return false;
+    }
+
+    try {
+      session.cdpRecoveryInProgress = true;
+      this.logger.info(`🔄 Attempting CDP session recovery for session ${sessionId}`);
+
+      // Increment retry count
+      session.cdpRetryCount = (session.cdpRetryCount || 0) + 1;
+      
+      // Max 3 recovery attempts
+      if (session.cdpRetryCount > 3) {
+        this.logger.error(`❌ CDP recovery failed - max retries exceeded for session ${sessionId}`);
+        return false;
+      }
+
+      // Get current page reference
+      const currentPage = session.page;
+      if (!currentPage || currentPage.isClosed()) {
+        this.logger.error(`❌ CDP recovery failed - page is closed for session ${sessionId}`);
+        return false;
+      }
+
+      // Detach old client if it exists
+      if (session.client) {
+        try {
+          await session.client.detach();
+        } catch (error) {
+          // Ignore detach errors
+          this.logger.debug(`Old CDP client detach completed for session ${sessionId}`);
+        }
+      }
+
+      // Create new CDP session
+      const newClient = await currentPage.target().createCDPSession();
+      
+      // Re-enable domains
+      await Promise.all([
+        newClient.send("Page.enable"),
+        newClient.send("Runtime.enable"), 
+        newClient.send("DOM.enable"),
+        newClient.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }).catch(() => {
+          // Non-critical
+        })
+      ]);
+
+      // Update session with new client
+      session.client = newClient;
+      session.lastCdpError = null;
+
+      // If streaming was active, restart it
+      if (session.streaming && session.streamCallback) {
+        await this.restartStreamingWithNewClient(session, newClient);
+      }
+
+      this.logger.info(`✅ CDP session recovery successful for session ${sessionId}`);
+      return true;
+
+    } catch (error) {
+      this.logger.error(`❌ CDP session recovery failed for session ${sessionId}:`, error.message);
+      session.lastCdpError = error.message;
+      return false;
+    } finally {
+      session.cdpRecoveryInProgress = false;
+    }
+  }
+
+  // **NEW: Restart streaming with new CDP client**
+  async restartStreamingWithNewClient(session, newClient) {
+    try {
+      this.logger.info(`🎬 Restarting streaming with new CDP client for session ${session.id}`);
+
+      // Start new screencast
+      await newClient.send("Page.startScreencast", {
+        format: "jpeg",
+        quality: 95,
+        maxWidth: Math.max(session.viewport.width, 1920),
+        maxHeight: Math.max(session.viewport.height, 1080),
+        everyNthFrame: 1,
+      });
+
+      // Handle screencast frames with the new client
+      newClient.on("Page.screencastFrame", async (params) => {
+        try {
+          await newClient.send("Page.screencastFrameAck", {
+            sessionId: params.sessionId,
+          });
+
+          if (session.streamCallback && session.streaming) {
+            session.streamCallback(params.data);
+          }
+        } catch (error) {
+          this.logger.error(`Error handling screencast frame after recovery:`, error.message);
+          // Don't throw, just log
+        }
+      });
+
+      this.logger.info(`✅ Streaming restarted successfully for session ${session.id}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to restart streaming:`, error.message);
+      throw error;
+    }
+  }
+
+  // **NEW: Get CDP endpoint with recovery support**
+  getCdpEndpointWithRecovery(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return null;
+    }
+
+    // Check if CDP session needs recovery
+    if (session.lastCdpError && !session.cdpRecoveryInProgress) {
+      // Trigger async recovery (don't wait for it)
+      this.recoverCdpSession(sessionId).catch(error => {
+        this.logger.error(`Background CDP recovery failed: ${error.message}`);
+      });
+    }
+
+    return session.browserWSEndpoint;
+  }
+
   async launchBrowser(sessionId, options = {}) {
     try {
       this.logger.info(`🚀 Launching browser for session: ${sessionId}`);
 
-      const isLinux = process.platform === "linux";
       const defaultOptions = {
-        headless: isLinux ? "new" : true, // Use new headless mode on Linux servers
+        headless: false, // SHOW BROWSER WINDOW - you can see automation!
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
@@ -303,20 +490,6 @@ export class BrowserStreamingService extends EventEmitter {
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
-
-          // Essential for headless Linux servers
-          ...(isLinux
-            ? [
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-                "--run-all-compositor-stages-before-draw",
-                "--memory-pressure-off",
-              ]
-            : []),
-
           "--disable-web-security",
           "--disable-features=VizDisplayCompositor",
           "--disable-gpu",
@@ -477,6 +650,21 @@ export class BrowserStreamingService extends EventEmitter {
           `🔧 Forced repaint after screencast start for session ${sessionId}`,
         );
       } catch (error) {
+        // **ENHANCED: Detect CDP session failures and attempt recovery**
+        if (error.message.includes("Session with given id not found") || 
+            error.message.includes("Target closed") ||
+            error.message.includes("Session closed")) {
+          this.logger.warn(`🔄 CDP session lost for ${sessionId}, attempting recovery...`);
+          session.lastCdpError = error.message;
+          
+          const recovered = await this.recoverCdpSession(sessionId);
+          if (recovered) {
+            // Retry streaming with recovered session
+            this.logger.info(`🔄 Retrying streaming after CDP recovery for ${sessionId}`);
+            return await this.startStreaming(sessionId, callback);
+          }
+        }
+        
         this.logger.error(
           `❌ Failed to start screencast for session ${sessionId}:`,
           error,
@@ -484,7 +672,7 @@ export class BrowserStreamingService extends EventEmitter {
         throw error;
       }
 
-      // Handle screencast frames
+      // Handle screencast frames with enhanced error recovery
       session.client.on("Page.screencastFrame", async (params) => {
         try {
           this.logger.debug(
@@ -512,10 +700,23 @@ export class BrowserStreamingService extends EventEmitter {
             );
           }
         } catch (error) {
-          this.logger.error(
-            `Error handling screencast frame for session ${sessionId}:`,
-            error,
-          );
+          // **ENHANCED: Handle CDP errors in screencast frame processing**
+          if (error.message.includes("Session with given id not found") || 
+              error.message.includes("Target closed") ||
+              error.message.includes("Session closed")) {
+            this.logger.warn(`🔄 CDP error in screencast frame for ${sessionId}: ${error.message}`);
+            session.lastCdpError = error.message;
+            
+            // Trigger recovery in background (don't block frame processing)
+            this.recoverCdpSession(sessionId).catch(recoveryError => {
+              this.logger.error(`Background CDP recovery failed: ${recoveryError.message}`);
+            });
+          } else {
+            this.logger.error(
+              `Error handling screencast frame for session ${sessionId}:`,
+              error,
+            );
+          }
         }
       });
 
@@ -942,6 +1143,9 @@ export class BrowserStreamingService extends EventEmitter {
       }
 
       this.sessions.delete(sessionId);
+
+      // Clean up stealth fingerprint
+      this.stealthService.cleanupSession(sessionId);
 
       this.logger.info(`✅ Browser closed for session: ${sessionId}`);
     } catch (error) {
@@ -2196,11 +2400,36 @@ export class BrowserStreamingService extends EventEmitter {
         }
       }
 
-      // Create new CDP client for the new tab
-      const newClient = await tabInfo.page.target().createCDPSession();
-      await newClient.send("Page.enable");
-      await newClient.send("Runtime.enable");
-      await newClient.send("DOM.enable");
+      // Create new CDP client for the new tab with error handling
+      let newClient;
+      try {
+        newClient = await tabInfo.page.target().createCDPSession();
+        await Promise.all([
+          newClient.send("Page.enable"),
+          newClient.send("Runtime.enable"),
+          newClient.send("DOM.enable")
+        ]);
+      } catch (error) {
+        if (error.message.includes("Session with given id not found") || 
+            error.message.includes("Target closed")) {
+          this.logger.warn(`🔄 CDP error during tab switch for ${sessionId}: ${error.message}`);
+          // Try to recover the main session first
+          const recovered = await this.recoverCdpSession(sessionId);
+          if (recovered) {
+            // Retry creating client for the tab
+            newClient = await tabInfo.page.target().createCDPSession();
+            await Promise.all([
+              newClient.send("Page.enable"),
+              newClient.send("Runtime.enable"),
+              newClient.send("DOM.enable")
+            ]);
+          } else {
+            throw error;
+          }
+        } else {
+          throw error;
+        }
+      }
 
       // Replace the client
       session.client = newClient;
@@ -2363,6 +2592,36 @@ export class BrowserStreamingService extends EventEmitter {
       });
     } catch (error) {
       // Ignore injection errors (page might be closed, etc.)
+    }
+  }
+
+  // **NEW: Get Browser WebSocket endpoint with auto-recovery**
+  getBrowserWSEndpoint(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return null;
+    }
+
+    // **ENHANCED: Return CDP endpoint with auto-recovery support**
+    return this.getCdpEndpointWithRecovery(sessionId);
+  }
+
+  // **NEW: Force CDP session recovery for external use**
+  async forceCdpRecovery(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    this.logger.info(`🔄 Force CDP recovery requested for session ${sessionId}`);
+    const recovered = await this.recoverCdpSession(sessionId);
+    
+    if (recovered) {
+      // Reset retry count on successful manual recovery
+      session.cdpRetryCount = 0;
+      return { success: true, message: "CDP session recovered successfully" };
+    } else {
+      return { success: false, message: "CDP session recovery failed" };
     }
   }
 }

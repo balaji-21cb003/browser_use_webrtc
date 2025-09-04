@@ -476,16 +476,29 @@ export class BrowserUseIntegrationService extends EventEmitter {
       // IMPORTANT: If we need to use existing browser but don't have CDP endpoint, try to get it from browser service
       if (useExistingBrowser && !cdpEndpoint && options.browserService) {
         try {
-          const browserSession = options.browserService.getSession(sessionId);
-          if (browserSession && browserSession.browserWSEndpoint) {
-            cdpEndpoint = browserSession.browserWSEndpoint;
+          // **ENHANCED: Use CDP endpoint with auto-recovery support**
+          const cdpEndpointWithRecovery = options.browserService.getBrowserWSEndpoint 
+            ? options.browserService.getBrowserWSEndpoint(sessionId)
+            : null;
+
+          if (cdpEndpointWithRecovery) {
+            cdpEndpoint = cdpEndpointWithRecovery;
             this.logger.info(
-              `🔗 Retrieved CDP endpoint from browser service: ${cdpEndpoint}`,
+              `🔗 Retrieved CDP endpoint with recovery support: ${cdpEndpoint}`,
             );
           } else {
-            this.logger.warn(
-              `⚠️ No browser session found for sessionId: ${sessionId}`,
-            );
+            // Fallback to direct session access
+            const browserSession = options.browserService.getSession(sessionId);
+            if (browserSession && browserSession.browserWSEndpoint) {
+              cdpEndpoint = browserSession.browserWSEndpoint;
+              this.logger.info(
+                `🔗 Retrieved CDP endpoint from browser service: ${cdpEndpoint}`,
+              );
+            } else {
+              this.logger.warn(
+                `⚠️ No browser session found for sessionId: ${sessionId}`,
+              );
+            }
           }
         } catch (error) {
           this.logger.warn(
