@@ -18,6 +18,15 @@ export class BrowserStreamingService extends EventEmitter {
     // Initialize optimized tab detection
     this.tabDetection = new OptimizedTabDetection(this.logger);
 
+    // Log environment info for debugging
+    this.logger.info(`🖥️ Platform: ${process.platform}`);
+    this.logger.info(
+      `🌐 Environment: ${process.env.NODE_ENV || "development"}`,
+    );
+    this.logger.info(
+      `🎯 Headless mode will be: ${process.platform === "linux" ? "new (Linux detected)" : "configurable"}`,
+    );
+
     // Start periodic cache cleanup
     setInterval(() => {
       this.tabDetection.cleanupCache();
@@ -67,8 +76,9 @@ export class BrowserStreamingService extends EventEmitter {
       // Create a NEW browser instance for this session to enable true parallelism
       // Use less restrictive configuration for better compatibility
       const isProduction = process.env.NODE_ENV === "production";
+      const isLinux = process.platform === "linux";
       const browser = await puppeteer.launch({
-        headless: isProduction ? true : false, // Allow non-headless in development
+        headless: isProduction || isLinux ? "new" : false, // Always headless on Linux servers
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
@@ -83,12 +93,25 @@ export class BrowserStreamingService extends EventEmitter {
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
 
+          // Essential for headless Linux servers
+          ...(isLinux
+            ? [
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--run-all-compositor-stages-before-draw",
+                "--memory-pressure-off",
+              ]
+            : []),
+
           // Less restrictive security (for better Instagram compatibility)
           // "--disable-web-security", // REMOVED - can cause issues with Instagram
           "--disable-features=VizDisplayCompositor",
 
           // GPU and rendering (minimal restrictions)
-          isProduction ? "--disable-gpu" : "", // Allow GPU in development
+          isProduction || isLinux ? "--disable-gpu" : "", // Always disable GPU on Linux
           "--use-gl=swiftshader",
 
           // Window management
@@ -267,8 +290,9 @@ export class BrowserStreamingService extends EventEmitter {
     try {
       this.logger.info(`🚀 Launching browser for session: ${sessionId}`);
 
+      const isLinux = process.platform === "linux";
       const defaultOptions = {
-        headless: true, // HIDE BROWSER WINDOW - automation still works!
+        headless: isLinux ? "new" : true, // Use new headless mode on Linux servers
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
           width: options.width || 1920,
@@ -279,6 +303,20 @@ export class BrowserStreamingService extends EventEmitter {
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
+
+          // Essential for headless Linux servers
+          ...(isLinux
+            ? [
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--run-all-compositor-stages-before-draw",
+                "--memory-pressure-off",
+              ]
+            : []),
+
           "--disable-web-security",
           "--disable-features=VizDisplayCompositor",
           "--disable-gpu",
