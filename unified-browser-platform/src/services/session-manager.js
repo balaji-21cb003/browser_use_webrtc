@@ -40,6 +40,8 @@ export class SessionManager extends EventEmitter {
       status: "created",
       browser: null,
       clients: new Set(),
+      activeTasks: new Set(), // Track active tasks
+      taskCompletedAt: null, // Track when last task completed
       options: {
         timeout:
           options.timeout ||
@@ -108,12 +110,24 @@ export class SessionManager extends EventEmitter {
     this.logger.info(`👤 Client ${clientId} removed from session ${sessionId}`);
     this.emit("client-removed", { sessionId, clientId });
 
-    // Auto-close session if no clients and auto-close is enabled
+    // Don't auto-close session if there are active tasks running
     if (session.clients.size === 0 && session.options.autoClose) {
+      // Check if session has active tasks
+      if (this.hasActiveTasks(sessionId)) {
+        this.logger.info(
+          `🚫 Session ${sessionId} has active tasks, skipping auto-close`
+        );
+        return session;
+      }
+
       setTimeout(() => {
-        // Double-check that no clients have reconnected
+        // Double-check that no clients have reconnected and no active tasks
         const currentSession = this.sessions.get(sessionId);
-        if (currentSession && currentSession.clients.size === 0) {
+        if (
+          currentSession &&
+          currentSession.clients.size === 0 &&
+          !this.hasActiveTasks(sessionId)
+        ) {
           this.destroySession(sessionId);
         }
       }, 30000); // 30 second grace period
@@ -137,6 +151,52 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  // Task tracking methods
+  addActiveTask(sessionId, taskId) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.activeTasks.add(taskId);
+      session.lastActivity = new Date();
+      this.logger.info(`📋 Task ${taskId} started in session ${sessionId}`);
+      this.emit("task-started", { sessionId, taskId });
+    }
+  }
+
+  removeActiveTask(sessionId, taskId) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.activeTasks.delete(taskId);
+      session.lastActivity = new Date();
+
+      // If no more active tasks, mark task completion time
+      if (session.activeTasks.size === 0) {
+        session.taskCompletedAt = new Date();
+        this.logger.info(
+          `✅ All tasks completed in session ${sessionId}, starting idle timer`
+        );
+        this.emit("all-tasks-completed", { sessionId });
+      }
+
+      this.logger.info(
+        `📋 Task ${taskId} completed in session ${sessionId} (${session.activeTasks.size} remaining)`
+      );
+      this.emit("task-completed", { sessionId, taskId });
+    }
+  }
+
+  hasActiveTasks(sessionId) {
+    const session = this.sessions.get(sessionId);
+    return session ? session.activeTasks.size > 0 : false;
+  }
+
+  getIdleTime(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.taskCompletedAt || session.activeTasks.size > 0) {
+      return 0;
+    }
+    return Date.now() - session.taskCompletedAt.getTime();
+  }
+
   async destroySession(sessionId) {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -156,7 +216,7 @@ export class SessionManager extends EventEmitter {
         } catch (error) {
           this.logger.warn(
             `Error closing browser for session ${sessionId}:`,
-            error,
+            error
           );
         }
       }
@@ -193,7 +253,7 @@ export class SessionManager extends EventEmitter {
     }
 
     this.logger.info(
-      `✅ All sessions deleted: ${results.length} sessions processed`,
+      `✅ All sessions deleted: ${results.length} sessions processed`
     );
     return {
       success: true,
@@ -206,19 +266,47 @@ export class SessionManager extends EventEmitter {
   cleanupInactiveSessions() {
     const now = new Date();
     const sessionsToCleanup = [];
+    const idleTimeout = parseInt(process.env.SESSION_IDLE_TIMEOUT) || 180000; // 3 minutes default
 
     for (const [sessionId, session] of this.sessions) {
       const inactiveTime = now - session.lastActivity;
       const timeout = session.options.timeout;
 
-      if (inactiveTime > timeout && session.clients.size === 0) {
+      // Check if session has active tasks
+      if (session.activeTasks.size > 0) {
+        this.logger.debug(
+          `🏃 Session ${sessionId} has ${session.activeTasks.size} active tasks, skipping cleanup`
+        );
+        continue;
+      }
+
+      // Check if session is within idle period after task completion
+      if (session.taskCompletedAt) {
+        const idleTime = now - session.taskCompletedAt;
+        if (idleTime < idleTimeout) {
+          this.logger.debug(
+            `⏰ Session ${sessionId} in idle period (${Math.round(idleTime / 1000)}s/${Math.round(idleTimeout / 1000)}s), skipping cleanup`
+          );
+          continue;
+        }
+      }
+
+      // Clean up if:
+      // 1. No clients connected AND (session exceeded timeout OR exceeded idle time after task completion)
+      // 2. Session has no active tasks
+      if (
+        session.clients.size === 0 &&
+        (inactiveTime > timeout ||
+          (session.taskCompletedAt &&
+            now - session.taskCompletedAt > idleTimeout))
+      ) {
         sessionsToCleanup.push(sessionId);
       }
     }
 
     if (sessionsToCleanup.length > 0) {
       this.logger.info(
-        `🧹 Cleaning up ${sessionsToCleanup.length} inactive sessions`,
+        `🧹 Cleaning up ${sessionsToCleanup.length} inactive sessions (task-aware cleanup)`
       );
 
       for (const sessionId of sessionsToCleanup) {
@@ -259,7 +347,7 @@ export class SessionManager extends EventEmitter {
     // Destroy all sessions
     const sessionIds = Array.from(this.sessions.keys());
     const destroyPromises = sessionIds.map((sessionId) =>
-      this.destroySession(sessionId),
+      this.destroySession(sessionId)
     );
 
     await Promise.allSettled(destroyPromises);

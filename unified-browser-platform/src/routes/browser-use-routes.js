@@ -157,6 +157,9 @@ export function createBrowserUseRoutes(
 
       console.log("============CREATING TASK");
 
+      // Mark task as active in session
+      sessionManager.addActiveTask(session.id, taskId);
+
       // Execute task asynchronously in the background
       // Pass browserService so the integration can get the CDP endpoint
       browserUseService
@@ -174,6 +177,9 @@ export function createBrowserUseRoutes(
           req,
         )
         .then((result) => {
+          // Remove task from active tasks when completed
+          sessionManager.removeActiveTask(session.id, taskId);
+
           // Check if task was paused before scheduling cleanup
           const taskInfo = browserUseService.getTaskInfo(taskId);
           const isTaskPaused =
@@ -224,6 +230,8 @@ export function createBrowserUseRoutes(
           }
         })
         .catch((error) => {
+          // Remove task from active tasks when failed
+          sessionManager.removeActiveTask(session.id, taskId);
           logger.error(`❌ Task ${taskId} execution failed:`, error);
         });
     } catch (error) {
@@ -314,6 +322,9 @@ export function createBrowserUseRoutes(
 
       console.log("============REUSING SESSION FOR NEW TASK============");
 
+      // Mark task as active in session
+      sessionManager.addActiveTask(sessionId, taskId);
+
       // Execute task asynchronously using existing session
       browserUseService
         .executeTaskAsync(
@@ -330,12 +341,16 @@ export function createBrowserUseRoutes(
           req,
         )
         .then((result) => {
+          // Remove task from active tasks when completed
+          sessionManager.removeActiveTask(sessionId, taskId);
           logger.info(
             `✅ Task ${taskId} completed successfully using existing session ${sessionId}`,
           );
           // Note: Do NOT clean up session since it might be reused for more tasks
         })
         .catch((error) => {
+          // Remove task from active tasks when failed
+          sessionManager.removeActiveTask(sessionId, taskId);
           logger.error(`❌ Task ${taskId} failed:`, error);
         });
     } catch (error) {
