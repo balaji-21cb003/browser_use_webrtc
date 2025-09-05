@@ -215,7 +215,7 @@ export class AgentService extends EventEmitter {
           timeout: options.timeout || 300000, // 5 minutes default
           maxSteps: options.maxSteps || 50,
           llmModel: options.llmModel || "gpt-4",
-          headless: process.env.BROWSER_HEADLESS === "false", // Use environment config
+          headless:true, // Use environment config
           useExistingBrowser: !!browserSession, // Flag to use existing browser
           ...options,
         },

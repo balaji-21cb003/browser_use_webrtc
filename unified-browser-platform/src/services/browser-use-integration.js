@@ -426,7 +426,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
             await options.browserService.createSessionWithSeparateBrowser(
               sessionId,
               {
-                headless: false, // Make it visible for streaming
+                headless: true, // Make it visible for streaming
                 width: 1920,
                 height: 1480, // Increased height for full browser capture
               },
@@ -476,30 +476,16 @@ export class BrowserUseIntegrationService extends EventEmitter {
       // IMPORTANT: If we need to use existing browser but don't have CDP endpoint, try to get it from browser service
       if (useExistingBrowser && !cdpEndpoint && options.browserService) {
         try {
-          // **ENHANCED: Use CDP endpoint with auto-recovery support**
-          const cdpEndpointWithRecovery = options.browserService
-            .getBrowserWSEndpoint
-            ? options.browserService.getBrowserWSEndpoint(sessionId)
-            : null;
-
-          if (cdpEndpointWithRecovery) {
-            cdpEndpoint = cdpEndpointWithRecovery;
+          const browserSession = options.browserService.getSession(sessionId);
+          if (browserSession && browserSession.browserWSEndpoint) {
+            cdpEndpoint = browserSession.browserWSEndpoint;
             this.logger.info(
-              `🔗 Retrieved CDP endpoint with recovery support: ${cdpEndpoint}`,
+              `🔗 Retrieved CDP endpoint from browser service: ${cdpEndpoint}`,
             );
           } else {
-            // Fallback to direct session access
-            const browserSession = options.browserService.getSession(sessionId);
-            if (browserSession && browserSession.browserWSEndpoint) {
-              cdpEndpoint = browserSession.browserWSEndpoint;
-              this.logger.info(
-                `🔗 Retrieved CDP endpoint from browser service: ${cdpEndpoint}`,
-              );
-            } else {
-              this.logger.warn(
-                `⚠️ No browser session found for sessionId: ${sessionId}`,
-              );
-            }
+            this.logger.warn(
+              `⚠️ No browser session found for sessionId: ${sessionId}`,
+            );
           }
         } catch (error) {
           this.logger.warn(
@@ -562,7 +548,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
         LLM_MODEL: llmConfig?.model || "gpt-4.1",
 
         // Browser configuration for automation
-        BROWSER_HEADLESS: process.env.BROWSER_HEADLESS || "false",
+        BROWSER_HEADLESS: process.env.BROWSER_HEADLESS ,
         BROWSER_PORT: process.env.BROWSER_PORT || "9222",
         BROWSER_WIDTH: "1920",
         BROWSER_HEIGHT: "1480", // Increased height for full browser capture
@@ -575,16 +561,6 @@ export class BrowserUseIntegrationService extends EventEmitter {
 
         // Token cost tracking
         BROWSER_USE_CALCULATE_COST: "true",
-
-        // Timeout configurations for cloud server compatibility
-        BROWSER_USE_WATCHDOG_TIMEOUT:
-          process.env.BROWSER_USE_WATCHDOG_TIMEOUT || "60000",
-        BROWSER_USE_EVENT_TIMEOUT:
-          process.env.BROWSER_USE_EVENT_TIMEOUT || "30000",
-        BROWSER_PROTOCOL_TIMEOUT:
-          process.env.BROWSER_PROTOCOL_TIMEOUT || "120000",
-        CDP_TIMEOUT: process.env.CDP_TIMEOUT || "120000",
-        TAB_SYNC_TIMEOUT: process.env.TAB_SYNC_TIMEOUT || "30000",
 
         // Python environment - prefer root venv
         PYTHONPATH:
@@ -617,9 +593,7 @@ export class BrowserUseIntegrationService extends EventEmitter {
             key.includes("OPENAI") ||
             key.includes("GOOGLE") ||
             key.includes("LLM") ||
-            key.includes("PYTHON") ||
-            key.includes("TIMEOUT") ||
-            key.includes("BROWSER_USE"),
+            key.includes("PYTHON"),
         ),
       });
 

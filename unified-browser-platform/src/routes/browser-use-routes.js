@@ -117,7 +117,7 @@ export function createBrowserUseRoutes(
           // Now create the browser session and bind it to the session manager session
           const browserSession =
             await browserService.createSessionWithSeparateBrowser(session.id, {
-              headless: false, // Make it visible for streaming
+              headless: true, // Make it visible for streaming
               width: 1920,
               height: 1480, // Taller to capture full Chrome UI
             });

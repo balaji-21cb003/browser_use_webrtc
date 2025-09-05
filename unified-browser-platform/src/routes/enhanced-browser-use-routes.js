@@ -68,7 +68,7 @@ export function createEnhancedBrowserUseRoutes(
         // Create browser session and bind it to the session manager session
         const browserSession =
           await browserService.createSessionWithSeparateBrowser(session.id, {
-            headless: false,
+            headless: true,
             width: 1920,
             height: 1480,
           });
