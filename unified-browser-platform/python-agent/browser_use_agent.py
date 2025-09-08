@@ -157,7 +157,7 @@ class UnifiedBrowserUseAgent:
                 llm=self.llm,
                 max_steps=max_steps,
                 browser_session=browser_session,  # Use shared session if available
-                use_vision=True,  # Enable vision capabilities
+                use_vision=False,  # Disable vision to prevent screenshot saving issues
                 save_conversation_path=None,  # Can be configured for logging
                 calculate_cost=True,  # Enable token cost tracking
             )
@@ -177,6 +177,39 @@ class UnifiedBrowserUseAgent:
                     print("✅ Visual highlighting disabled successfully")
                 except ImportError:
                     print("⚠️ Could not import highlights module - highlighting may still appear")
+            
+            # CRITICAL: Completely disable screenshot functionality to prevent disk space issues
+            print("🚫 Disabling screenshot functionality to prevent timeout errors...")
+            try:
+                # Monkey-patch the screenshot event handling to prevent timeouts
+                import browser_use.browser.watchdog_base as watchdog_base
+                
+                # Override the ScreenshotWatchdog event handler to do nothing
+                class NoOpScreenshotWatchdog:
+                    def __init__(self, *args, **kwargs):
+                        pass
+                    
+                    async def on_ScreenshotEvent(self, event):
+                        # Do nothing - skip screenshot processing entirely
+                        print("🚫 Screenshot event skipped to prevent timeout")
+                        return None
+                
+                # Replace the ScreenshotWatchdog class
+                watchdog_base.ScreenshotWatchdog = NoOpScreenshotWatchdog
+                print("✅ Screenshot functionality completely disabled")
+                
+                # Also patch the browser session screenshot method
+                if self.agent.browser_session and hasattr(self.agent.browser_session, 'screenshot'):
+                    async def disabled_screenshot(*args, **kwargs):
+                        print("🚫 Screenshot call bypassed")
+                        return None
+                    
+                    self.agent.browser_session.screenshot = disabled_screenshot
+                    print("✅ Browser session screenshot method disabled")
+                
+            except Exception as e:
+                print(f"⚠️ Could not disable screenshot functionality: {e}")
+                print("🚫 Screenshots may still cause timeout issues")
             
             # Initialize token cost service to enable cost tracking
             if self.agent.token_cost_service:

@@ -22,7 +22,7 @@
           console.log("Socket.IO loaded successfully");
           // Initialize the streaming client after Socket.IO loads
           if (typeof io !== "undefined") {
-            new WebRTCStreamingClient();
+            window.webRTCClient = new WebRTCStreamingClient();
           }
         };
         script.onerror = function () {
@@ -132,6 +132,234 @@
           opacity: 0;
         }
       }
+
+      /* Tab Management UI Styles */
+      .tab-control-button {
+        position: fixed;
+        top: 15px;
+        left: 15px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 10px 15px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        z-index: 1001;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .tab-control-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        background: linear-gradient(135deg, #7c8ef5 0%, #8659b8 100%);
+      }
+
+      .tab-control-button:active {
+        transform: translateY(0);
+      }
+
+      .tabs-popup {
+        position: fixed;
+        top: 60px;
+        left: 15px;
+        background: linear-gradient(
+          145deg,
+          rgba(30, 30, 30, 0.95),
+          rgba(20, 20, 20, 0.95)
+        );
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(10px);
+        z-index: 1000;
+        max-width: 450px;
+        min-width: 320px;
+        opacity: 0;
+        transform: translateY(-10px) scale(0.95);
+        transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        pointer-events: none;
+      }
+
+      .tabs-popup.show {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        pointer-events: all;
+      }
+
+      .tabs-popup-header {
+        padding: 15px 20px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .tabs-popup-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .tabs-popup-close {
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        border-radius: 6px;
+        color: white;
+        width: 24px;
+        height: 24px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+      }
+
+      .tabs-popup-close:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .tabs-list {
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 10px;
+      }
+
+      .tabs-list::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .tabs-list::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+      }
+
+      .tabs-list::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 3px;
+      }
+
+      .tab-item {
+        padding: 12px 15px;
+        margin: 4px 0;
+        border-radius: 8px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        background: transparent;
+        transition: all 0.2s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .tab-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
+        transform: translateX(2px);
+      }
+
+      .tab-item.active {
+        background: linear-gradient(
+          135deg,
+          rgba(76, 175, 80, 0.2),
+          rgba(56, 142, 60, 0.2)
+        );
+        border-color: #4caf50;
+        box-shadow: 0 2px 10px rgba(76, 175, 80, 0.3);
+      }
+
+      .tab-item.active:hover {
+        background: linear-gradient(
+          135deg,
+          rgba(76, 175, 80, 0.3),
+          rgba(56, 142, 60, 0.3)
+        );
+      }
+
+      .tab-title {
+        font-size: 13px;
+        font-weight: 500;
+        color: #ffffff;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .tab-url {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.6);
+        word-break: break-all;
+      }
+
+      .active-tab-indicator {
+        position: fixed;
+        bottom: 20px;
+        left: 15px;
+        background: linear-gradient(
+          135deg,
+          rgba(30, 30, 30, 0.9),
+          rgba(20, 20, 20, 0.9)
+        );
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 12px 16px;
+        z-index: 1000;
+        font-size: 12px;
+        max-width: 350px;
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(8px);
+      }
+
+      .active-tab-title {
+        font-weight: 600;
+        color: #4caf50;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .active-tab-url {
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 10px;
+      }
+
+      .tab-count {
+        background: rgba(255, 255, 255, 0.2);
+        color: white;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 10px;
+        font-weight: 500;
+      }
+
+      /* Animation for tab switching */
+      @keyframes tabSwitch {
+        0% {
+          opacity: 0.6;
+          transform: scale(0.98);
+        }
+        50% {
+          opacity: 0.8;
+          transform: scale(1.02);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      .tab-switching {
+        animation: tabSwitch 0.5s ease-in-out;
+      }
     </style>
   </head>
   <body>
@@ -143,52 +371,48 @@
           <p>Loading...</p>
         </div>
 
-        <!-- Tab Management UI -->
-        <div
-          id="tabsContainer"
-          style="
-            display: none;
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 10px;
-            border-radius: 8px;
-            z-index: 1000;
-            max-width: 400px;
-            font-size: 12px;
-          "
+        <!-- Improved Tab Management UI -->
+        <button
+          id="tabControlButton"
+          class="tab-control-button"
+          style="display: none"
         >
-          <div style="font-weight: bold; margin-bottom: 8px">
-            🗂️ Browser Tabs
+          🗂️ <span id="tabButtonText">Tabs</span>
+          <span id="tabCount" class="tab-count">0</span>
+        </button>
+
+        <div id="tabsPopup" class="tabs-popup">
+          <div class="tabs-popup-header">
+            <div class="tabs-popup-title">
+              🗂️ Browser Tabs
+              <span id="popupTabCount" class="tab-count">0</span>
+            </div>
+            <button id="closeTabsPopup" class="tabs-popup-close">×</button>
           </div>
-          <div id="tabsList" style="max-height: 150px; overflow-y: auto">
-            <!-- Tabs will be populated here -->
+          <div id="tabsList" class="tabs-list">
+            <div
+              style="
+                opacity: 0.7;
+                text-align: center;
+                padding: 20px;
+                color: rgba(255, 255, 255, 0.6);
+              "
+            >
+              Loading tabs...
+            </div>
           </div>
         </div>
 
-        <!-- Active Tab Info -->
+        <!-- Improved Active Tab Info -->
         <div
-          id="activeTabInfo"
-          style="
-            display: none;
-            position: fixed;
-            bottom: 40px;
-            left: 10px;
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 8px 12px;
-            border-radius: 5px;
-            z-index: 1000;
-            font-size: 11px;
-            max-width: 300px;
-          "
+          id="activeTabIndicator"
+          class="active-tab-indicator"
+          style="display: none"
         >
-          <div id="activeTabTitle">Loading...</div>
-          <div id="activeTabUrl" style="opacity: 0.7; margin-top: 2px">
-            Loading...
+          <div id="activeTabTitle" class="active-tab-title">
+            <span>🔸</span> Loading...
           </div>
+          <div id="activeTabUrl" class="active-tab-url">Loading...</div>
         </div>
 
         <!-- Interaction Status Indicator -->
@@ -249,6 +473,13 @@
           // Tab management
           this.tabs = [];
           this.activeTabId = null;
+          this.isTabsPopupVisible = false;
+
+          // Tab UI elements
+          this.tabControlButton = null;
+          this.tabsPopup = null;
+          this.tabsList = null;
+          this.activeTabIndicator = null;
 
           // WebRTC components
           this.peerConnection = null;
@@ -296,13 +527,14 @@
           this.ctx.imageSmoothingEnabled = true;
           this.ctx.imageSmoothingQuality = "high";
 
-          // Set initial canvas size - will be updated when first frame arrives
+          // Set FIXED canvas size - always use 1920x1080 for consistent streaming
           this.canvas.width = 1920;
           this.canvas.height = 1080;
 
           this.img = new Image();
           this.img.onload = () => {
-            this.updateCanvasDimensions();
+            // IMPORTANT: Always maintain 1920x1080 canvas dimensions
+            // Do NOT resize canvas based on image - keep it fixed
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             this.ctx.drawImage(
               this.img,
@@ -319,52 +551,51 @@
           // Handle window resize with debouncing
           let resizeTimeout = null;
           window.addEventListener("resize", () => {
-            if (resizeTimeout) clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(
-              () => this.updateCanvasDimensions(),
-              100,
-            );
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+              this.updateCanvasDimensions();
+            }, 300);
           });
         }
 
         // Update canvas dimensions to maintain aspect ratio for iframe embedding
         updateCanvasDimensions() {
-          if (!this.img.naturalWidth || !this.img.naturalHeight) return;
-
           const container = this.canvas.parentElement;
           const containerRect = container.getBoundingClientRect();
 
-          // Use full container space for iframe embedding
-          const maxWidth = containerRect.width;
-          const maxHeight = containerRect.height;
+          // FIXED: Use consistent display size for streaming consistency
+          const FIXED_DISPLAY_WIDTH = Math.min(
+            1280,
+            containerRect.width * 0.95,
+          );
+          const FIXED_DISPLAY_HEIGHT = (FIXED_DISPLAY_WIDTH * 1080) / 1920;
 
-          // Calculate aspect ratio of the source image
-          const sourceAspectRatio =
-            this.img.naturalWidth / this.img.naturalHeight;
-          const containerAspectRatio = maxWidth / maxHeight;
+          // Ensure we don't exceed container height
+          const maxHeight = containerRect.height * 0.9;
+          let displayWidth = FIXED_DISPLAY_WIDTH;
+          let displayHeight = FIXED_DISPLAY_HEIGHT;
 
-          let displayWidth, displayHeight;
-
-          if (sourceAspectRatio > containerAspectRatio) {
-            // Image is wider than container - fit to width
-            displayWidth = maxWidth;
-            displayHeight = maxWidth / sourceAspectRatio;
-          } else {
-            // Image is taller than container - fit to height
+          if (displayHeight > maxHeight) {
             displayHeight = maxHeight;
-            displayWidth = maxHeight * sourceAspectRatio;
+            displayWidth = (displayHeight * 1920) / 1080;
           }
 
-          // Set canvas display size to fill container
+          // Set canvas display size to fixed dimensions for consistency
           this.canvas.style.width = `${displayWidth}px`;
           this.canvas.style.height = `${displayHeight}px`;
 
-          // Set internal canvas resolution to match source image for crisp quality
-          this.canvas.width = this.img.naturalWidth;
-          this.canvas.height = this.img.naturalHeight;
+          // Center the canvas in the container
+          this.canvas.style.position = "absolute";
+          this.canvas.style.left = "50%";
+          this.canvas.style.top = "50%";
+          this.canvas.style.transform = "translate(-50%, -50%)";
+
+          // ALWAYS keep internal canvas resolution at 1920x1080 for maximum quality
+          this.canvas.width = 1920;
+          this.canvas.height = 1080;
 
           console.log(
-            `📐 Canvas updated for iframe - Display: ${displayWidth.toFixed(1)}x${displayHeight.toFixed(1)}, Internal: ${this.canvas.width}x${this.canvas.height}, Source: ${this.img.naturalWidth}x${this.img.naturalHeight}`,
+            `📐 Canvas FIXED STREAMING SIZE - Display: ${displayWidth.toFixed(1)}x${displayHeight.toFixed(1)}, Internal: 1920x1080`,
           );
         }
 
@@ -373,7 +604,8 @@
           let isDragging = false;
           let lastMousePosition = { x: 0, y: 0 };
           let dragStartPosition = { x: 0, y: 0 };
-          let mouseButtonPressed = false;
+          let mouseButtonPressed = null; // Track which button is pressed
+          let mouseDownSent = false; // Track if mousedown was sent
 
           // Mouse down events
           this.canvas.addEventListener("mousedown", (e) => {
@@ -382,14 +614,13 @@
             const coords = this.getScaledCoordinates(e);
             if (!coords) return;
 
-            isDragging = true;
-            mouseButtonPressed = true;
+            isDragging = false; // Reset on new mousedown
+            mouseButtonPressed = e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
+            mouseDownSent = true;
             dragStartPosition = { x: coords.x, y: coords.y };
             lastMousePosition = { x: coords.x, y: coords.y };
 
-            const button =
-              e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
-            this.sendMouseEvent("mousedown", coords.x, coords.y, 0, 0, button);
+            this.sendMouseEvent("mousedown", coords.x, coords.y, 0, 0, mouseButtonPressed);
           });
 
           // Mouse move events with throttling for better performance
@@ -399,6 +630,17 @@
 
             const coords = this.getScaledCoordinates(e);
             if (!coords) return;
+
+            // Check if we're actually dragging
+            if (mouseButtonPressed && mouseDownSent) {
+              const dragDistance = Math.sqrt(
+                Math.pow(coords.x - dragStartPosition.x, 2) +
+                Math.pow(coords.y - dragStartPosition.y, 2)
+              );
+              if (dragDistance > 3) {
+                isDragging = true;
+              }
+            }
 
             // Throttle mouse move events for better performance
             if (moveTimeout) return;
@@ -422,46 +664,42 @@
 
             const coords = this.getScaledCoordinates(e);
             if (!coords) {
-              isDragging = false;
-              mouseButtonPressed = false;
+              this.resetMouseState();
               return;
             }
 
-            const button =
-              e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
+            const button = e.button === 0 ? "left" : e.button === 2 ? "right" : "middle";
 
-            // Only send mouseup if we actually sent a mousedown
-            if (mouseButtonPressed) {
+            // Only send mouseup if we sent a corresponding mousedown
+            if (mouseDownSent && mouseButtonPressed === button) {
               this.sendMouseEvent("mouseup", coords.x, coords.y, 0, 0, button);
+              
+              // If it wasn't a drag, send a click
+              if (!isDragging) {
+                setTimeout(() => {
+                  this.sendMouseEvent("click", coords.x, coords.y, 0, 0, button);
+                }, 10);
+              }
             }
 
-            // If it was a short drag, treat it as a click
-            const dragDistance = Math.sqrt(
-              Math.pow(coords.x - dragStartPosition.x, 2) +
-                Math.pow(coords.y - dragStartPosition.y, 2),
-            );
-
-            // Send click only for short drags/clicks and only if we have a clean mouse state
-            if (dragDistance < 5 && mouseButtonPressed) {
-              // Small delay to ensure mouseup is processed first
-              setTimeout(() => {
-                this.sendMouseEvent("click", coords.x, coords.y);
-              }, 10);
-            }
-
-            isDragging = false;
-            mouseButtonPressed = false;
+            this.resetMouseState();
           });
 
-          // Click events - only for standalone clicks (not after drag)
-          this.canvas.addEventListener("click", (e) => {
-            if (!this.currentSession || isDragging || mouseButtonPressed)
-              return;
-            const coords = this.getScaledCoordinates(e);
-            if (!coords) return;
+          // Reset mouse state helper
+          this.resetMouseState = () => {
+            isDragging = false;
+            mouseButtonPressed = null;
+            mouseDownSent = false;
+          };
 
-            // Only send click if we haven't already handled it in mouseup
-            this.sendMouseEvent("click", coords.x, coords.y);
+          // Mouse leave - reset state when mouse leaves canvas
+          this.canvas.addEventListener("mouseleave", () => {
+            this.resetMouseState();
+          });
+
+          // Context menu prevention
+          this.canvas.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
           });
 
           // Mouse wheel events
@@ -695,6 +933,12 @@
 
           this.socket.on("disconnect", () => {
             console.log("Disconnected from server");
+
+            // Clean up tab refresh interval
+            if (this.tabRefreshInterval) {
+              clearInterval(this.tabRefreshInterval);
+              this.tabRefreshInterval = null;
+            }
           });
 
           this.socket.on("session-joined", (data) => {
@@ -766,25 +1010,97 @@
           // Available tabs received
           this.socket.on("available-tabs", (data) => {
             console.log("📑 Received available tabs:", data);
+            console.log(
+              "📑 Raw tabs data structure:",
+              JSON.stringify(data, null, 2),
+            );
+
             this.tabs = data.tabs || [];
-            this.activeTabId = data.activeTabId;
+            
+            // Find and sync active tab ID from server data or tab.active flag
+            const activeTab = this.tabs.find(tab => tab.active) || 
+                             (data.activeTabId ? this.tabs.find(tab => 
+                               tab.id === data.activeTabId || 
+                               tab.id.substring(0, 8) === data.activeTabId
+                             ) : null);
+            
+            if (activeTab) {
+              if (this.activeTabId !== activeTab.id) {
+                this.activeTabId = activeTab.id;
+                console.log(`🔄 Synced active tab: ${activeTab.title} (${activeTab.id.substring(0, 8)})`);
+              }
+            } else if (data.activeTabId) {
+              this.activeTabId = data.activeTabId; // Fallback
+            }
+
+            // Debug tab IDs and structure
+            this.tabs.forEach((tab, index) => {
+              console.log(
+                `📑 Tab ${index}: ID="${tab.id.substring(0, 8)}...", active=${tab.active}, title="${tab.title}"`,
+              );
+            });
+
+            console.log(`📑 Active Tab ID from server: ${this.activeTabId ? this.activeTabId.substring(0, 8) + '...' : 'none'}`);
+
             this.updateTabsUI();
           });
 
           // Tab switched successfully
           this.socket.on("tab-switched", (data) => {
-            console.log("🔄 Tab switched:", data);
-            this.activeTabId = data.tabId;
-            this.updateActiveTabInfo(data.activeTab);
-            this.requestAvailableTabs(); // Refresh tabs list
+            console.log("🔄 Tab switched successfully:", data);
+
+            // Handle both short and full tab IDs
+            const targetTab = this.tabs.find(tab => 
+              tab.id === data.tabId || 
+              tab.id.substring(0, 8) === data.tabId ||
+              data.tabId.includes(tab.id.substring(0, 8))
+            );
+            
+            if (targetTab) {
+              this.activeTabId = targetTab.id; // Store full ID
+              console.log(`🎯 Set active tab: ${targetTab.title} (${targetTab.id.substring(0, 8)})`);
+            } else {
+              this.activeTabId = data.tabId; // Fallback
+            }
+
+            // Update active tab info if provided
+            if (data.activeTab) {
+              this.updateActiveTabInfo(data.activeTab);
+            }
+
+            // Refresh tabs list to update UI
+            this.requestAvailableTabs();
+
+            // Remove switching animation from all tabs
+            if (this.tabsList) {
+              this.tabsList
+                .querySelectorAll(".tab-switching")
+                .forEach((tab) => {
+                  tab.classList.remove("tab-switching");
+                });
+            }
+
+            // Show success feedback
+            this.showTabSwitchFeedback(
+              "✅ Tab switched successfully",
+              "success",
+            );
+
+            console.log(`✅ Successfully switched to tab: ${data.tabId}`);
           });
 
           // Tab changed (broadcast from other clients)
           this.socket.on("tab-changed", (data) => {
             console.log("📢 Tab changed (broadcast):", data);
+
+            // Update active tab tracking
             this.activeTabId = data.activeTabId;
             this.updateActiveTabInfo(data.activeTab);
-            this.requestAvailableTabs(); // Refresh tabs list
+
+            // Refresh tabs list to update UI
+            this.requestAvailableTabs();
+
+            console.log(`📢 Tab changed via broadcast to: ${data.activeTabId}`);
           });
 
           // Active tab info received
@@ -796,7 +1112,15 @@
           // Tab switch error
           this.socket.on("tab-switch-error", (data) => {
             console.error("❌ Tab switch failed:", data);
-            this.showSecurityBlocked(`Failed to switch tab: ${data.message}`);
+            this.showTabSwitchFeedback(
+              `❌ Failed to switch tab: ${data.message}`,
+              "error",
+            );
+
+            // Remove switching animation from all tabs
+            this.tabsList.querySelectorAll(".tab-switching").forEach((tab) => {
+              tab.classList.remove("tab-switching");
+            });
           });
         }
 
@@ -910,8 +1234,13 @@
             if (video.readyState >= 2) {
               this.frameCount++;
 
+              // ENHANCED: Maximum quality image smoothing
               this.ctx.imageSmoothingEnabled = true;
               this.ctx.imageSmoothingQuality = "high";
+
+              // ENHANCED: Additional quality settings for crisp rendering
+              this.ctx.globalCompositeOperation = "source-over";
+              this.ctx.filter = "contrast(1.05) saturate(1.02)"; // Slight enhancement
 
               this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
               this.ctx.drawImage(
@@ -921,6 +1250,9 @@
                 this.canvas.width,
                 this.canvas.height,
               );
+
+              // Reset filter to avoid affecting other drawings
+              this.ctx.filter = "none";
             }
             requestAnimationFrame(drawFrame);
           };
@@ -971,22 +1303,108 @@
         // ===== TAB MANAGEMENT METHODS =====
 
         initializeTabManagement() {
-          console.log("🗂️ Initializing tab management...");
+          console.log("🗂️ Initializing enhanced tab management...");
 
-          // Show tab UI
-          document.getElementById("tabsContainer").style.display = "block";
-          document.getElementById("activeTabInfo").style.display = "block";
+          // Get UI elements
+          this.tabControlButton = document.getElementById("tabControlButton");
+          this.tabsPopup = document.getElementById("tabsPopup");
+          this.tabsList = document.getElementById("tabsList");
+          this.activeTabIndicator =
+            document.getElementById("activeTabIndicator");
+
+          // Show tab control button
+          this.tabControlButton.style.display = "flex";
+          this.activeTabIndicator.style.display = "block";
+
+          // Setup event listeners
+          this.setupTabUIEventListeners();
 
           // Request initial tabs and active tab info
           this.requestAvailableTabs();
           this.requestActiveTabInfo();
 
           // Refresh tabs periodically
-          setInterval(() => {
+          this.tabRefreshInterval = setInterval(() => {
             if (this.currentSession && this.socket?.connected) {
               this.requestAvailableTabs();
             }
           }, 5000); // Every 5 seconds
+        }
+
+        setupTabUIEventListeners() {
+          // Tab control button click
+          this.tabControlButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.toggleTabsPopup();
+          });
+
+          // Close popup button
+          document
+            .getElementById("closeTabsPopup")
+            .addEventListener("click", (e) => {
+              e.stopPropagation();
+              this.hideTabsPopup();
+            });
+
+          // Click outside to close popup
+          document.addEventListener("click", (e) => {
+            if (
+              this.isTabsPopupVisible &&
+              !this.tabsPopup.contains(e.target) &&
+              !this.tabControlButton.contains(e.target)
+            ) {
+              this.hideTabsPopup();
+            }
+          });
+
+          // Prevent popup from closing when clicking inside it
+          this.tabsPopup.addEventListener("click", (e) => {
+            e.stopPropagation();
+          });
+
+          // Escape key to close popup
+          document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && this.isTabsPopupVisible) {
+              this.hideTabsPopup();
+            }
+          });
+        }
+
+        toggleTabsPopup() {
+          if (this.isTabsPopupVisible) {
+            this.hideTabsPopup();
+          } else {
+            this.showTabsPopup();
+          }
+        }
+
+        showTabsPopup() {
+          if (!this.tabsPopup) return;
+
+          this.isTabsPopupVisible = true;
+          this.tabsPopup.classList.add("show");
+
+          // Refresh tabs when opening popup
+          this.requestAvailableTabs();
+
+          // Update button appearance
+          this.tabControlButton.style.background =
+            "linear-gradient(135deg, #4CAF50 0%, #45a049 100%)";
+
+          console.log("📖 Tabs popup opened");
+        }
+
+        hideTabsPopup() {
+          if (!this.tabsPopup) return;
+
+          this.isTabsPopupVisible = false;
+          this.tabsPopup.classList.remove("show");
+
+          // Reset button appearance
+          this.tabControlButton.style.background =
+            "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+
+          console.log("📕 Tabs popup closed");
         }
 
         requestAvailableTabs() {
@@ -1012,111 +1430,183 @@
             );
             console.log("Socket connected:", this.socket?.connected);
             console.log("Current session:", this.currentSession);
+            this.showTabSwitchFeedback(
+              "❌ Cannot switch tab - connection issue",
+              "error",
+            );
+            return;
+          }
+
+          // Find the tab by either full ID or short ID
+          const targetTab = this.tabs.find(tab => 
+            tab.id === tabId || 
+            tab.id.substring(0, 8) === tabId ||
+            tabId.includes(tab.id.substring(0, 8))
+          );
+          
+          if (!targetTab) {
+            console.error(`❌ [TAB SWITCH] Tab ${tabId} not found in current tabs`);
+            this.showTabSwitchFeedback("❌ Tab not found", "error");
             return;
           }
 
           console.log(`🔄 [TAB SWITCH] Switching to tab: ${tabId}`);
+          console.log(`🔄 [TAB SWITCH] Target tab full ID: ${targetTab.id}`);
           console.log(`🔄 [TAB SWITCH] Session ID: ${this.currentSession}`);
           console.log(
             `🔄 [TAB SWITCH] Socket connected: ${this.socket.connected}`,
           );
 
+          // Add visual feedback for switching
+          const tabElement = this.tabsList.querySelector(
+            `[data-tab-id="${targetTab.id}"]`,
+          );
+          if (tabElement) {
+            tabElement.classList.add("tab-switching");
+          }
+
+          // Show loading feedback
+          this.showTabSwitchFeedback("🔄 Switching tabs...", "success");
+
+          // Send the FULL tab ID to the server (this is what the server expects)
           this.socket.emit("switch-to-tab", {
             sessionId: this.currentSession,
-            tabId: tabId,
+            tabId: targetTab.id, // Use full ID for server communication
           });
 
           console.log(
-            `📤 [TAB SWITCH] Sent switch-to-tab event for tab ${tabId}`,
+            `📤 [TAB SWITCH] Sent switch-to-tab event for tab ${targetTab.id}`,
           );
+
+          // Hide popup after switching (with a delay to see the feedback)
+          setTimeout(() => {
+            this.hideTabsPopup();
+          }, 500);
         }
 
         updateTabsUI() {
-          const tabsList = document.getElementById("tabsList");
-          if (!tabsList) return;
+          if (!this.tabsList) return;
 
-          tabsList.innerHTML = "";
+          this.tabsList.innerHTML = "";
+
+          // Update tab counts
+          const tabCount = this.tabs.length;
+          document.getElementById("tabCount").textContent = tabCount;
+          document.getElementById("popupTabCount").textContent = tabCount;
+
+          // Update button text
+          const buttonText = document.getElementById("tabButtonText");
+          buttonText.textContent = tabCount === 1 ? "Tab" : "Tabs";
 
           if (this.tabs.length === 0) {
-            tabsList.innerHTML =
-              '<div style="opacity: 0.7;">No tabs available</div>';
+            this.tabsList.innerHTML = `
+              <div style="
+                opacity: 0.7; 
+                text-align: center; 
+                padding: 30px 20px; 
+                color: rgba(255,255,255,0.6);
+                font-style: italic;
+              ">
+                🔍 No tabs found
+                <div style="font-size: 10px; margin-top: 5px;">
+                  Try refreshing or opening a new browser session
+                </div>
+              </div>
+            `;
             return;
           }
 
-          this.tabs.forEach((tab) => {
+          this.tabs.forEach((tab, index) => {
             const tabElement = document.createElement("div");
-            tabElement.style.cssText = `
-              padding: 6px 8px;
-              margin: 2px 0;
-              border-radius: 4px;
-              cursor: pointer;
-              border: 1px solid ${tab.isActive ? "#4CAF50" : "transparent"};
-              background: ${tab.isActive ? "rgba(76, 175, 80, 0.2)" : "transparent"};
-              transition: all 0.2s;
-              font-size: 11px;
-              line-height: 1.3;
-            `;
+            
+            // Improved active state detection
+            const isActive = tab.active || 
+                           tab.id === this.activeTabId ||
+                           (this.activeTabId && tab.id.substring(0, 8) === this.activeTabId.substring(0, 8));
+                           
+            tabElement.className = `tab-item ${isActive ? "active" : ""}`;
+
+            // Ensure we use the correct tab ID - backend uses 'id' consistently
+            const tabIdToUse = tab.id;
+            tabElement.setAttribute("data-tab-id", tabIdToUse);
+
+            const favicon = tab.favIconUrl
+              ? `<img src="${tab.favIconUrl}" style="width: 16px; height: 16px; margin-right: 4px;" onerror="this.style.display='none'">`
+              : "";
 
             tabElement.innerHTML = `
-              <div style="font-weight: ${tab.isActive ? "bold" : "normal"};">
-                ${tab.isActive ? "🔸" : "🔹"} ${this.truncateText(tab.title || "Untitled", 25)}
+              <div class="tab-title">
+                ${isActive ? "🟢" : "⚪"} 
+                ${favicon}
+                ${this.truncateText(tab.title || "Untitled Tab", 35)}
               </div>
-              <div style="opacity: 0.6; font-size: 10px;">
-                ${this.truncateText(tab.url || "", 35)}
+              <div class="tab-url">
+                ${this.truncateText(tab.url || "about:blank", 50)}
               </div>
             `;
 
             tabElement.addEventListener("click", () => {
               console.log(
-                `🖱️ [TAB CLICK] Tab clicked: ${tab.id}, isActive: ${tab.isActive}`,
+                `🖱️ [TAB CLICK] Tab clicked: ${tab.id.substring(0, 8)}..., active: ${isActive}`,
               );
               console.log(`🖱️ [TAB CLICK] Tab title: ${tab.title}`);
               console.log(
                 `🖱️ [TAB CLICK] Current session: ${this.currentSession}`,
               );
 
-              if (!tab.isActive) {
+              if (!isActive) {
+                // Use the tab.id directly - backend expects this exact format
                 console.log(
-                  `📤 [TAB CLICK] Initiating switch to tab: ${tab.id}`,
+                  `📤 [TAB CLICK] Initiating switch to tab: ${tab.id.substring(0, 8)}...`,
                 );
                 this.switchToTab(tab.id);
               } else {
                 console.log(
-                  `⏭️ [TAB CLICK] Tab is already active, skipping switch`,
+                  `⏭️ [TAB CLICK] Tab is already active, closing popup`,
                 );
+                this.hideTabsPopup();
               }
             });
 
+            // Add hover effects
             tabElement.addEventListener("mouseenter", () => {
-              if (!tab.isActive) {
-                tabElement.style.background = "rgba(255, 255, 255, 0.1)";
+              if (!tab.active) {
+                tabElement.style.transform = "translateX(4px)";
               }
             });
 
             tabElement.addEventListener("mouseleave", () => {
-              if (!tab.isActive) {
-                tabElement.style.background = "transparent";
-              }
+              tabElement.style.transform = "translateX(0)";
+              tabElement.classList.remove("tab-switching");
             });
 
-            tabsList.appendChild(tabElement);
+            this.tabsList.appendChild(tabElement);
           });
         }
 
         updateActiveTabInfo(activeTab) {
+          if (!this.activeTabIndicator) return;
+
           const titleElement = document.getElementById("activeTabTitle");
           const urlElement = document.getElementById("activeTabUrl");
 
           if (titleElement && urlElement) {
             if (activeTab) {
-              titleElement.textContent = `🔸 ${this.truncateText(activeTab.title || "Untitled", 30)}`;
+              const favicon = activeTab.favIconUrl
+                ? `<img src="${activeTab.favIconUrl}" style="width: 14px; height: 14px; margin-right: 4px;" onerror="this.style.display='none'">`
+                : "🔸";
+
+              titleElement.innerHTML = `
+                <span>${favicon}</span>
+                ${this.truncateText(activeTab.title || "Untitled Tab", 40)}
+              `;
               urlElement.textContent = this.truncateText(
-                activeTab.url || "",
-                40,
+                activeTab.url || "about:blank",
+                55,
               );
             } else {
-              titleElement.textContent = "🔸 No active tab";
-              urlElement.textContent = "";
+              titleElement.innerHTML = "<span>🔸</span> No active tab";
+              urlElement.textContent = "Waiting for tab information...";
             }
           }
         }
@@ -1127,7 +1617,94 @@
             ? text.substring(0, maxLength) + "..."
             : text;
         }
+
+        showTabSwitchFeedback(message, type = "success") {
+          // Create or update feedback element
+          let feedback = document.getElementById("tabSwitchFeedback");
+          if (!feedback) {
+            feedback = document.createElement("div");
+            feedback.id = "tabSwitchFeedback";
+            feedback.style.cssText = `
+              position: fixed;
+              top: 70px;
+              right: 20px;
+              padding: 10px 15px;
+              border-radius: 8px;
+              font-size: 12px;
+              font-weight: 600;
+              z-index: 1001;
+              opacity: 0;
+              transform: translateX(20px);
+              transition: all 0.3s ease;
+              max-width: 250px;
+            `;
+            document.body.appendChild(feedback);
+          }
+
+          // Set style based on type
+          if (type === "success") {
+            feedback.style.background =
+              "linear-gradient(135deg, #4CAF50, #45a049)";
+            feedback.style.color = "white";
+          } else {
+            feedback.style.background =
+              "linear-gradient(135deg, #f44336, #d32f2f)";
+            feedback.style.color = "white";
+          }
+
+          feedback.textContent = message;
+
+          // Show feedback
+          feedback.style.opacity = "1";
+          feedback.style.transform = "translateX(0)";
+
+          // Hide after 3 seconds
+          setTimeout(() => {
+            if (feedback) {
+              feedback.style.opacity = "0";
+              feedback.style.transform = "translateX(20px)";
+
+              setTimeout(() => {
+                if (feedback && feedback.parentNode) {
+                  feedback.parentNode.removeChild(feedback);
+                }
+              }, 300);
+            }
+          }, 3000);
+        }
       }
+      
+      // Make client globally accessible for debugging
+      window.webRTCClient = null;
+      
+      // Global helper functions for debugging
+      window.switchToTab = (tabId) => {
+        if (window.webRTCClient) {
+          window.webRTCClient.switchToTab(tabId);
+        } else {
+          console.error('WebRTC Client not initialized');
+        }
+      };
+      
+      window.debugTabs = () => {
+        if (window.webRTCClient && window.webRTCClient.tabs) {
+          console.log('Current tabs:', window.webRTCClient.tabs.map(tab => ({
+            shortId: tab.id.substring(0, 8),
+            fullId: tab.id,
+            title: tab.title,
+            active: tab.active,
+            isCurrentActive: tab.id === window.webRTCClient.activeTabId
+          })));
+          console.log('Current activeTabId:', window.webRTCClient.activeTabId);
+        }
+      };
+      
+      window.refreshTabs = () => {
+        if (window.webRTCClient) {
+          window.webRTCClient.requestAvailableTabs();
+          console.log('🔄 Requested tab refresh');
+        }
+      };
     </script>
   </body>
 </html>

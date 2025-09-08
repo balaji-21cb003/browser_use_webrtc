@@ -14,6 +14,7 @@ export class BrowserStreamingService extends EventEmitter {
     this.sessions = new Map();
     this.logger = new Logger("BrowserStreamingService");
     this.isInitialized = false;
+    this.stealthService = null; // Reference to stealth service for delegation
 
     // Initialize optimized tab detection
     this.tabDetection = new OptimizedTabDetection(this.logger);
@@ -43,6 +44,16 @@ export class BrowserStreamingService extends EventEmitter {
 
     this.isInitialized = true;
     this.logger.info("✅ Browser Streaming Service initialized");
+  }
+
+  /**
+   * Set reference to stealth service for enhanced tab handling
+   */
+  setStealthService(stealthService) {
+    this.stealthService = stealthService;
+    this.logger.info(
+      "🕵️ Stealth service reference set for enhanced tab handling",
+    );
   }
 
   // Clean up mouse states for all sessions
@@ -78,11 +89,12 @@ export class BrowserStreamingService extends EventEmitter {
       const isProduction = process.env.NODE_ENV === "production";
       const isLinux = process.platform === "linux";
       const browser = await puppeteer.launch({
-        headless: true, // Always headless on Linux servers
+        headless: false, // Change to false to see multiple tabs clearly
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
-          width: options.width || 1920,
-          height: options.height || 1200,
+          width: options.width || parseInt(process.env.BROWSER_WIDTH) || 1920,
+          height:
+            options.height || parseInt(process.env.BROWSER_HEIGHT) || 1080,
           deviceScaleFactor: 1,
         },
         args: [
@@ -115,7 +127,7 @@ export class BrowserStreamingService extends EventEmitter {
           "--use-gl=swiftshader",
 
           // Window management
-          `--window-size=${options.width || 1920},${options.height || 1200}`,
+          `--window-size=${options.width || parseInt(process.env.BROWSER_WIDTH) || 1920},${options.height || parseInt(process.env.BROWSER_HEIGHT) || 1080}`,
           "--window-position=0,0",
           "--force-device-scale-factor=1",
 
@@ -156,9 +168,10 @@ export class BrowserStreamingService extends EventEmitter {
       const page = await browser.newPage();
 
       // Set up page configuration
+      // Set up page configuration
       const defaultViewport = {
-        width: options.width || 1920,
-        height: options.height || 1080,
+        width: options.width || parseInt(process.env.BROWSER_WIDTH) || 1920,
+        height: options.height || parseInt(process.env.BROWSER_HEIGHT) || 1080,
         deviceScaleFactor: 1,
       };
 
@@ -227,6 +240,28 @@ export class BrowserStreamingService extends EventEmitter {
         };
       });
 
+      // **STABILITY FIX: Add connection recovery handlers**
+      browser.on("disconnected", () => {
+        this.logger.warn(
+          `🔌 Browser disconnected for session ${sessionId}, attempting recovery...`,
+        );
+        // Don't immediately close session - let the system recover
+      });
+
+      page.on("error", (error) => {
+        this.logger.warn(
+          `📄 Page error for session ${sessionId}: ${error.message}`,
+        );
+        // Log but don't crash
+      });
+
+      page.on("pageerror", (error) => {
+        this.logger.debug(
+          `📄 Page JavaScript error for session ${sessionId}: ${error.message}`,
+        );
+        // Log but don't crash
+      });
+
       // Navigate to initial page
       await page.goto("about:blank");
 
@@ -292,11 +327,12 @@ export class BrowserStreamingService extends EventEmitter {
 
       const isLinux = process.platform === "linux";
       const defaultOptions = {
-        headless: true, // Use new headless mode on Linux servers
+        headless: false, // Change to false to see multiple tabs clearly
         executablePath: process.env.CHROME_PATH || undefined,
         defaultViewport: {
-          width: options.width || 1920,
-          height: options.height || 1200, // Increased for better content viewing
+          width: options.width || parseInt(process.env.BROWSER_WIDTH) || 1920,
+          height:
+            options.height || parseInt(process.env.BROWSER_HEIGHT) || 1080,
           deviceScaleFactor: 1,
         },
         args: [
@@ -343,7 +379,7 @@ export class BrowserStreamingService extends EventEmitter {
           "--disable-popup-blocking",
           "--hide-scrollbars",
           "--mute-audio",
-          `--window-size=${options.width || 1920},${options.height || 1200}`,
+          `--window-size=${options.width || parseInt(process.env.BROWSER_WIDTH) || 1920},${options.height || parseInt(process.env.BROWSER_HEIGHT) || 1080}`,
           "--window-position=0,0",
           "--force-device-scale-factor=1",
           "--disable-blink-features=AutomationControlled",
@@ -456,8 +492,8 @@ export class BrowserStreamingService extends EventEmitter {
         const result = await session.client.send("Page.startScreencast", {
           format: "jpeg",
           quality: 95, // Increased from 80 to 95 for higher quality
-          maxWidth: Math.max(session.viewport.width, 1920), // Ensure minimum resolution
-          maxHeight: Math.max(session.viewport.height, 1080),
+          maxWidth: 1920, // FORCE consistent 1920x1080 streaming resolution
+          maxHeight: 1080, // FORCE consistent 1920x1080 streaming resolution
           everyNthFrame: 1, // Capture every frame for smooth streaming
         });
         this.logger.debug(
@@ -1101,6 +1137,74 @@ export class BrowserStreamingService extends EventEmitter {
     }
   }
 
+  // Core CDP streaming methods
+  async startStreaming(sessionId, streamCallback) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found for streaming`);
+    }
+
+    try {
+      // Create CDP client if not exists
+      if (!session.client) {
+        session.client = await session.page.target().createCDPSession();
+        await session.client.send("Page.enable");
+        await session.client.send("Runtime.enable");
+        await session.client.send("DOM.enable");
+      }
+
+      // Setup screencast frame handler
+      session.client.on("Page.screencastFrame", async (params) => {
+        try {
+          // Acknowledge frame
+          await session.client.send("Page.screencastFrameAck", {
+            sessionId: params.sessionId,
+          });
+
+          // Send frame via callback
+          if (streamCallback && session.streaming) {
+            const frameBuffer = Buffer.from(params.data, "base64");
+            streamCallback(frameBuffer);
+          }
+        } catch (error) {
+          this.logger.error(`Error handling screencast frame:`, error);
+        }
+      });
+
+      // Start screencast
+      await session.client.send("Page.startScreencast", {
+        format: "jpeg",
+        quality: 95, // UPGRADED: Maximum quality for crisp streaming
+        maxWidth: 1920, // FORCE consistent 1920x1080 streaming resolution
+        maxHeight: 1080, // FORCE consistent 1920x1080 streaming resolution
+        everyNthFrame: 1,
+      });
+
+      session.streaming = true;
+      this.logger.info(`✅ CDP streaming started for session ${sessionId}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to start CDP streaming: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async stopStreaming(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    try {
+      if (session.client && session.streaming) {
+        await session.client.send("Page.stopScreencast");
+        session.streaming = false;
+        this.logger.info(`🛑 CDP streaming stopped for session ${sessionId}`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Failed to stop CDP streaming: ${error.message}`);
+      // Force stop anyway
+      session.streaming = false;
+    }
+  }
+
   // Simple CDP screencast streaming - single page only
   async stopVideoStreaming(sessionId) {
     const session = this.sessions.get(sessionId);
@@ -1164,8 +1268,8 @@ export class BrowserStreamingService extends EventEmitter {
 
       // Configure the new page
       await newPage.setViewport({
-        width: 1920,
-        height: 1500,
+        width: parseInt(process.env.BROWSER_WIDTH) || 1920,
+        height: parseInt(process.env.BROWSER_HEIGHT) || 1080,
         deviceScaleFactor: 1,
       });
 
@@ -2016,6 +2120,14 @@ export class BrowserStreamingService extends EventEmitter {
       return false;
     }
 
+    // **STEALTH: Handle stealth sessions directly without delegation to prevent recursion**
+    if (session.stealthEnabled && this.stealthService) {
+      this.logger.info(
+        `🕵️ Handling stealth session tab switch directly for ${sessionId}`,
+      );
+      // Continue with normal browser service tab switching
+    }
+
     try {
       // **NEW: Check for activity lock before switching (unless manual)**
       if (!isManual && this.tabDetection) {
@@ -2210,9 +2322,9 @@ export class BrowserStreamingService extends EventEmitter {
       if (session.streaming && session.streamCallback) {
         await newClient.send("Page.startScreencast", {
           format: "jpeg",
-          quality: 80,
-          maxWidth: session.viewport.width,
-          maxHeight: session.viewport.height,
+          quality: 95, // UPGRADED: Maximum quality for crisp streaming
+          maxWidth: 1920, // FORCE consistent 1920x1080 streaming resolution
+          maxHeight: 1080, // FORCE consistent 1920x1080 streaming resolution
           everyNthFrame: 1,
         });
 

@@ -216,6 +216,9 @@
         max-height: 100%;
         border: none;
         cursor: crosshair;
+        display: block;
+        margin: 0 auto;
+        object-fit: contain;
       }
 
       .placeholder {
@@ -454,6 +457,88 @@
         font-style: italic;
       }
 
+      /* Tab Management Styles */
+      .tabs-section {
+        margin-top: 15px;
+        border-top: 1px solid #e2e8f0;
+        padding-top: 15px;
+      }
+
+      .tabs-container {
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .tab-item {
+        background: #f7fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+
+      .tab-item:hover {
+        background: #e2e8f0;
+        transform: translateX(2px);
+      }
+
+      .tab-item.active {
+        background: #667eea;
+        color: white;
+        border-color: #5a67d8;
+      }
+
+      .tab-title {
+        font-weight: 500;
+        font-size: 12px;
+        margin-bottom: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tab-url {
+        font-size: 10px;
+        color: #718096;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tab-item.active .tab-url {
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      .no-tabs {
+        text-align: center;
+        color: #a0aec0;
+        font-style: italic;
+        padding: 10px;
+      }
+
+      /* Animation for tab switching */
+      @keyframes tabSwitch {
+        0% {
+          opacity: 0.6;
+          transform: scale(0.98);
+        }
+        50% {
+          opacity: 0.8;
+          transform: scale(1.02);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      .tab-switching {
+        animation: tabSwitch 0.5s ease-in-out;
+      }
+
       @media (max-width: 768px) {
         .main-content {
           grid-template-columns: 1fr;
@@ -541,6 +626,22 @@
                 Screenshot
               </button>
             </div>
+
+            <!-- Tab Management Section -->
+            <div class="tabs-section" id="tabsSection" style="display: none">
+              <h4 style="margin: 10px 0 5px 0; font-size: 14px; color: #4a5568">
+                🗂️ Browser Tabs
+              </h4>
+              <div class="tabs-container" id="tabsContainer">
+                <div
+                  class="no-tabs"
+                  style="color: #a0aec0; font-size: 12px; padding: 5px"
+                >
+                  No tabs detected
+                </div>
+              </div>
+            </div>
+
             <div class="input-group">
               <button class="btn" id="formFillingBtn" disabled>
                 📝 Enable Form Filling

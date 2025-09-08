@@ -18,10 +18,12 @@ import { fileURLToPath } from "url";
 
 // Import services
 import { BrowserStreamingService } from "./services/browser-streaming.js";
+import { StealthEnhancedBrowserService } from "./services/stealth-enhanced-browser-service.js";
 import { AgentService } from "./services/agent-service.js";
 import { BrowserUseIntegrationService } from "./services/browser-use-integration.js";
 import { SessionManager } from "./services/session-manager.js";
 import { SecurityService } from "./services/security.js";
+import { STABILITY_CONFIG } from "./config/stability-config.js";
 
 // Import routes
 import {
@@ -59,8 +61,14 @@ class UnifiedBrowserPlatform {
     this.port = process.env.PORT || 3000;
     this.logger = new Logger("UnifiedBrowserPlatform");
 
+    // Setup enhanced error handling based on stability config
+    this.setupEnhancedErrorHandling();
+
     // Initialize core services
-    this.browserService = new BrowserStreamingService();
+    this.originalBrowserService = new BrowserStreamingService();
+    this.browserService = new StealthEnhancedBrowserService(
+      this.originalBrowserService,
+    );
     this.agentService = new AgentService();
     this.browserUseService = new BrowserUseIntegrationService();
     this.sessionManager = new SessionManager();
@@ -72,6 +80,62 @@ class UnifiedBrowserPlatform {
 
     // Start periodic cleanup of invalid sessions
     this.startPeriodicCleanup();
+  }
+
+  setupEnhancedErrorHandling() {
+    if (STABILITY_CONFIG.SERVER_RESILIENCE.HANDLE_UNCAUGHT_EXCEPTIONS) {
+      // Handle uncaught exceptions gracefully
+      process.on('uncaughtException', (error) => {
+        this.logger.error('Uncaught Exception:', error);
+        
+        // Don't exit the process for non-critical errors
+        if (!this.isCriticalError(error)) {
+          this.logger.info('✅ Continuing server operation after handling non-critical error');
+          return;
+        }
+        
+        this.logger.error('💥 Critical error encountered, shutting down gracefully');
+        this.stop();
+      });
+
+      // Handle unhandled promise rejections
+      process.on('unhandledRejection', (reason, promise) => {
+        this.logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+        
+        // Don't exit for common protocol errors
+        if (this.isHarmlessProtocolError(reason)) {
+          this.logger.debug('🔇 Ignored harmless protocol error in promise rejection');
+          return;
+        }
+      });
+    }
+  }
+
+  isCriticalError(error) {
+    const message = error.message || error.toString();
+    
+    // These are NOT critical errors
+    const nonCriticalPatterns = [
+      ...STABILITY_CONFIG.ERROR_HANDLING.IGNORED_PROTOCOL_ERRORS,
+      ...STABILITY_CONFIG.ERROR_HANDLING.DEBUG_ONLY_ERRORS,
+      'EADDRINUSE',
+      'Target closed',
+      'Session closed'
+    ];
+    
+    return !nonCriticalPatterns.some(pattern => 
+      message.toLowerCase().includes(pattern.toLowerCase())
+    );
+  }
+
+  isHarmlessProtocolError(error) {
+    const message = error?.message || error?.toString() || '';
+    
+    return STABILITY_CONFIG.ERROR_HANDLING.IGNORED_PROTOCOL_ERRORS.some(pattern =>
+      message.includes(pattern)
+    ) || STABILITY_CONFIG.ERROR_HANDLING.DEBUG_ONLY_ERRORS.some(pattern =>
+      message.includes(pattern)
+    );
   }
 
   setupMiddleware() {
@@ -142,14 +206,22 @@ class UnifiedBrowserPlatform {
   async setupRoutes() {
     // Health check
     this.app.get("/health", (req, res) => {
+      const browserHealth = this.browserService.isHealthy();
       res.json({
         status: "healthy",
         timestamp: new Date().toISOString(),
         services: {
-          browser: this.browserService.isHealthy(),
+          browser: browserHealth,
           agent: this.agentService.isHealthy(),
           browserUse: this.browserUseService.isHealthy(),
           sessions: this.sessionManager.getActiveSessionsCount(),
+        },
+        stealth: {
+          enabled: process.env.DISABLE_STEALTH !== "true",
+          config: this.browserService.getStealthConfig
+            ? this.browserService.getStealthConfig()
+            : null,
+          sessions: browserHealth.stealthSessions || 0,
         },
         mouseStates: this.getMouseStatesSummary(),
       });
@@ -587,14 +659,10 @@ class UnifiedBrowserPlatform {
             return;
           }
 
-          // this.logger.info(
-          //   `🖱️ Mouse event: ${type} at (${x}, ${y}) for session ${sessionId}`,
-          // );
-
           // Get the browser session
           const browserSession = this.browserService.getSession(sessionId);
-          if (!browserSession) {
-            this.logger.warn(`No browser session found for ${sessionId}`);
+          if (!browserSession || !browserSession.page) {
+            this.logger.warn(`No valid browser session found for ${sessionId}`);
             return;
           }
 
@@ -602,35 +670,15 @@ class UnifiedBrowserPlatform {
           try {
             switch (type) {
               case "click":
-                // Use proper Puppeteer mouse methods for coordinate-based clicking
+                // Simple click implementation - move to position and click
                 await browserSession.page.mouse.move(x, y);
-
-                // Ensure mouse button is in up state before clicking to prevent "already pressed" errors
-                try {
-                  await browserSession.page.mouse.up({
-                    button: button || "left",
-                  });
-                } catch (upError) {
-                  // Ignore errors if button wasn't down - this is just a safety measure
-                }
-
-                await browserSession.page.mouse.down({
+                await browserSession.page.mouse.click(x, y, {
                   button: button || "left",
-                });
-                await browserSession.page.mouse.up({
-                  button: button || "left",
+                  clickCount: 1
                 });
                 break;
               case "mousedown":
-                // Ensure button is up first to prevent "already pressed" errors
-                try {
-                  await browserSession.page.mouse.up({
-                    button: button || "left",
-                  });
-                } catch (upError) {
-                  // Ignore errors if button wasn't down
-                }
-
+                await browserSession.page.mouse.move(x, y);
                 await browserSession.page.mouse.down({
                   button: button || "left",
                 });
@@ -649,14 +697,20 @@ class UnifiedBrowserPlatform {
               default:
                 this.logger.warn(`Unknown mouse event type: ${type}`);
             }
-
-            // this.logger.info(
-            //   `✅ Mouse event ${type} executed successfully at (${x}, ${y})`,
-            // );
           } catch (error) {
-            this.logger.error(
-              `Failed to execute mouse event ${type}: ${error.message}`,
-            );
+            // Check if it's a harmless protocol error due to session closure
+            if (error.message.includes("Protocol error") && 
+                (error.message.includes("Session closed") || 
+                 error.message.includes("Target closed") ||
+                 error.message.includes("Connection closed"))) {
+              this.logger.debug(
+                `Mouse event ${type} skipped - session closed: ${error.message}`,
+              );
+            } else {
+              this.logger.error(
+                `Failed to execute mouse event ${type}: ${error.message}`,
+              );
+            }
           }
         } catch (error) {
           this.logger.error("Mouse event handling error:", error);
@@ -732,9 +786,19 @@ class UnifiedBrowserPlatform {
 
             // this.logger.info(`✅ Keyboard event ${type} executed successfully`);
           } catch (error) {
-            this.logger.error(
-              `Failed to execute keyboard event ${type}: ${error.message}`,
-            );
+            // Check if it's a harmless protocol error due to session closure
+            if (error.message.includes("Protocol error") && 
+                (error.message.includes("Session closed") || 
+                 error.message.includes("Target closed") ||
+                 error.message.includes("Connection closed"))) {
+              this.logger.debug(
+                `Keyboard event ${type} skipped - session closed: ${error.message}`,
+              );
+            } else {
+              this.logger.error(
+                `Failed to execute keyboard event ${type}: ${error.message}`,
+              );
+            }
           }
         } catch (error) {
           this.logger.error("Keyboard event handling error:", error);
@@ -746,61 +810,90 @@ class UnifiedBrowserPlatform {
       // Get available tabs
       socket.on("get-available-tabs", async (data) => {
         try {
-          const { sessionId } = data;
-          const targetSessionId = sessionId || socket.sessionId;
-
+          // Get session ID from data or socket
+          const targetSessionId = data?.sessionId || socket.sessionId;
           if (!targetSessionId) {
+            this.logger.warn(
+              `No session ID available for tab request from ${socket.id}`,
+            );
             socket.emit("error", { message: "No session ID available" });
+            return;
+          }
+
+          // Check if session exists in session manager first
+          const session = this.sessionManager.getSession(targetSessionId);
+          if (!session) {
+            this.logger.warn(
+              `Session ${targetSessionId} not found in session manager for ${socket.id}`,
+            );
+            socket.emit("available-tabs", {
+              sessionId: targetSessionId,
+              tabs: [],
+              activeTabId: null,
+            });
             return;
           }
 
           const tabs = this.browserService.getTabsList(targetSessionId);
           const activeTab = this.browserService.getActiveTab(targetSessionId);
 
+          this.logger.info(
+            `📑 Sending ${tabs.length} tabs to client ${socket.id} for session ${targetSessionId}`,
+          );
+
           socket.emit("available-tabs", {
             sessionId: targetSessionId,
             tabs: tabs,
             activeTabId: activeTab?.id || null,
           });
-
-          // this.logger.info(
-          //   `📑 Sent ${tabs.length} available tabs to client ${socket.id} for session ${targetSessionId}`,
-          // );
         } catch (error) {
           this.logger.error("Failed to get available tabs:", error);
-          socket.emit("error", { message: error.message });
+          socket.emit("available-tabs", {
+            sessionId: data?.sessionId || socket.sessionId,
+            tabs: [],
+            activeTabId: null,
+          });
         }
       });
 
       // Switch to specific tab
       socket.on("switch-to-tab", async (data) => {
-        try {
-          // console.log(
-          //   `📨 [TAB SWITCH SERVER] Received switch-to-tab request:`,
-          //   data,
-          // );
+        console.log(
+          `� [TAB SWITCH DEBUG] Received switch-to-tab request:`,
+          data,
+        );
 
+        try {
           const { sessionId, tabId } = data;
           const targetSessionId = sessionId || socket.sessionId;
 
-          // console.log(
-          //   `🔄 [TAB SWITCH SERVER] Target session: ${targetSessionId}, Tab ID: ${tabId}`,
-          // );
-          // console.log(
-          //   `🔄 [TAB SWITCH SERVER] Socket session: ${socket.sessionId}`,
-          // );
+          console.log(
+            `🔄 [TAB SWITCH DEBUG] Target session: ${targetSessionId}, Tab ID: ${tabId}`,
+          );
+          console.log(
+            `🔄 [TAB SWITCH DEBUG] Socket session: ${socket.sessionId}`,
+          );
 
           if (!targetSessionId) {
             console.error(`❌ [TAB SWITCH SERVER] No session ID available`);
-            socket.emit("error", { message: "No session ID available" });
+            socket.emit("tab-switch-error", {
+              message: "No session ID available",
+            });
             return;
           }
 
           if (!tabId) {
             console.error(`❌ [TAB SWITCH SERVER] No tab ID provided`);
-            socket.emit("error", { message: "No tab ID provided" });
+            socket.emit("tab-switch-error", { message: "No tab ID provided" });
             return;
           }
+
+          console.log(
+            `🔄 [TAB SWITCH DEBUG] Browser service exists: ${!!this.browserService}`,
+          );
+          console.log(
+            `🔄 [TAB SWITCH DEBUG] switchToTab method exists: ${!!this.browserService?.switchToTab}`,
+          );
 
           console.log(
             `🔄 [TAB SWITCH SERVER] Calling browserService.switchToTab(${targetSessionId}, ${tabId}) with manual=true`,
@@ -943,6 +1036,12 @@ class UnifiedBrowserPlatform {
       await this.sessionManager.initialize();
       await this.securityService.initialize();
 
+      // Set up cross-service references for enhanced functionality
+      this.originalBrowserService.setStealthService(this.browserService);
+
+      // Set Socket.IO server reference for stealth service tab broadcasting
+      this.browserService.setSocketServer(this.io);
+
       // Setup routes after services are initialized
       await this.setupRoutes();
 
@@ -958,6 +1057,13 @@ class UnifiedBrowserPlatform {
       });
     } catch (error) {
       this.logger.error("Failed to start Unified Browser Platform:", error);
+      
+      // Only exit on critical startup errors
+      if (STABILITY_CONFIG.SERVER_RESILIENCE.PREVENT_SHUTDOWN_ON_ERRORS) {
+        this.logger.warn("⚠️ Startup error encountered but continuing based on stability configuration");
+        return;
+      }
+      
       process.exit(1);
     }
   }

@@ -76,7 +76,7 @@ export const DESKTOP_CAPTURE_CONFIG = {
   FALLBACK: {
     enabled: true, // Enable fallback to tab capture
     method: "Page.startScreencast", // Fallback method
-    quality: 80, // Lower quality for fallback
+    quality: 95, // Lower quality for fallback
     fps: 5, // Lower FPS for fallback
   },
 };

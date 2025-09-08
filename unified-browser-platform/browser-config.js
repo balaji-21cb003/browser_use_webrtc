@@ -28,8 +28,9 @@ export const BROWSER_CONFIG = {
     height: 1480, // Increased height for full browser capture
   },
 
-  // Additional Chrome arguments to bypass version checks
+  // Additional Chrome arguments to bypass version checks and enable stealth
   EXTRA_ARGS: [
+    // Original flags
     "--disable-infobars",
     "--disable-notifications",
     "--disable-popup-blocking",
@@ -45,7 +46,41 @@ export const BROWSER_CONFIG = {
     "--disable-zoom", // Disable zoom functionality
     "--app=about:blank", // App mode to hide taskbar on Windows
     "--kiosk", // Kiosk mode for fullscreen without taskbar
+
+    // Enhanced stealth flags
+    "--exclude-switches=enable-automation",
+    "--disable-extensions-except=",
+    "--disable-extensions",
+    "--disable-default-apps",
+    "--disable-translate",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-field-trial-config",
+    "--disable-back-forward-cache",
+    "--disable-ipc-flooding-protection",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--disable-component-update",
+    "--disable-sync",
+    "--metrics-recording-only",
+    "--no-report-upload",
+    "--no-crash-upload",
+    "--memory-pressure-off",
+    "--disable-background-networking",
+    "--disable-background-media-suspend",
+    "--disable-client-side-phishing-detection",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--enable-automation=false",
   ],
+
+  // Stealth mode configuration
+  STEALTH_MODE: {
+    ENABLED: process.env.DISABLE_STEALTH !== "true", // Enable by default
+    ENVIRONMENT: process.env.NODE_ENV || "development",
+    LOG_LEVEL: process.env.STEALTH_LOG_LEVEL || "info",
+  },
 };
 
 export default BROWSER_CONFIG;

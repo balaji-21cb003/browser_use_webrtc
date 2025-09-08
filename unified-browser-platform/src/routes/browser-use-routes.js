@@ -365,7 +365,7 @@ export function createBrowserUseRoutes(
   // Get all active sessions - useful for session reuse
   router.get("/sessions", async (req, res) => {
     try {
-      const sessions = sessionManager.getAllSessions();
+      const sessions = sessionManager.listSessions();
 
       // Filter and format session information
       const activeSessions = Object.values(sessions)
@@ -1658,6 +1658,175 @@ export function createBrowserUseRoutes(
         success: false,
         error: error.message,
         type: "delete-error",
+      });
+    }
+  });
+
+  // **NEW: Stealth Configuration and Monitoring Endpoints**
+
+  // Get stealth configuration and status
+  router.get("/stealth/config", async (req, res) => {
+    try {
+      const stealthConfig = browserService.getStealthConfig
+        ? browserService.getStealthConfig()
+        : null;
+      const browserHealth = browserService.isHealthy();
+
+      res.json({
+        success: true,
+        stealth: {
+          enabled: process.env.DISABLE_STEALTH !== "true",
+          environment: process.env.NODE_ENV || "development",
+          config: stealthConfig,
+          health: browserHealth,
+          sessions: {
+            total: browserHealth.totalSessions || 0,
+            stealth: browserHealth.stealthSessions || 0,
+            regular: browserHealth.regularSessions || 0,
+          },
+          features: {
+            userAgentRotation: true,
+            viewportRandomization: true,
+            humanMouseMovement: true,
+            humanTyping: true,
+            canvasFingerprinting: true,
+            requestHeaderVariation: true,
+            detectionRecovery: true,
+          },
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error("Failed to get stealth configuration:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "stealth-config-error",
+      });
+    }
+  });
+
+  // Get stealth statistics for monitoring
+  router.get("/stealth/stats", async (req, res) => {
+    try {
+      const browserHealth = browserService.isHealthy();
+      const activeTasks = browserUseService.getActiveTasks();
+      const stealthTasks = activeTasks.filter((task) => {
+        // Check if task is using stealth session
+        const session = sessionManager.getSession(task.sessionId);
+        return session && session.stealthEnabled;
+      });
+
+      res.json({
+        success: true,
+        statistics: {
+          totalSessions: browserHealth.totalSessions || 0,
+          stealthSessions: browserHealth.stealthSessions || 0,
+          regularSessions: browserHealth.regularSessions || 0,
+          activeTasks: activeTasks.length,
+          stealthTasks: stealthTasks.length,
+          detectionEvents: 0, // TODO: Implement detection event tracking
+          recoveryActions: 0, // TODO: Implement recovery action tracking
+          uptime: process.uptime(),
+          memoryUsage: process.memoryUsage(),
+        },
+        performance: {
+          avgTaskDuration: this.calculateAverageTaskDuration(activeTasks),
+          successRate: this.calculateSuccessRate(),
+          detectionRate: 0, // TODO: Implement detection rate calculation
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error("Failed to get stealth statistics:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "stealth-stats-error",
+      });
+    }
+  });
+
+  // Test stealth features
+  router.post("/stealth/test", async (req, res) => {
+    try {
+      const { url = "https://bot.sannysoft.com/", timeout = 30000 } = req.body;
+
+      logger.info(`🧪 Running stealth test against: ${url}`);
+
+      // Create temporary stealth session for testing
+      const testSessionId = `test_${Date.now()}`;
+      const testSession = await browserService.createSessionWithSeparateBrowser(
+        testSessionId,
+        {
+          enableStealth: true,
+          headless: true,
+        },
+      );
+
+      try {
+        // Navigate to test page
+        await testSession.navigate(url);
+
+        // Wait for page to load
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        // Take screenshot for analysis
+        const screenshot = await testSession.screenshot({
+          type: "jpeg",
+          quality: 95,
+        });
+
+        // Simple detection check (look for common detection indicators)
+        const pageContent = await testSession.page.content();
+        const detectionIndicators = [
+          "automation",
+          "webdriver",
+          "headless",
+          "bot detected",
+          "suspicious",
+          "blocked",
+        ];
+
+        const detected = detectionIndicators.some((indicator) =>
+          pageContent.toLowerCase().includes(indicator),
+        );
+
+        // Cleanup test session
+        await browserService.closeBrowser(testSessionId);
+
+        res.json({
+          success: true,
+          test: {
+            url: url,
+            detected: detected,
+            timestamp: new Date().toISOString(),
+            sessionId: testSessionId,
+            screenshot: screenshot.toString("base64"),
+            detectionIndicators: detected
+              ? detectionIndicators.filter((indicator) =>
+                  pageContent.toLowerCase().includes(indicator),
+                )
+              : [],
+            pageTitle: await testSession.page.title(),
+            userAgent: testSession.userAgent,
+            viewport: testSession.viewport,
+          },
+          message: detected
+            ? "⚠️ Potential detection - stealth features may need adjustment"
+            : "✅ Stealth test passed - no detection indicators found",
+        });
+      } catch (testError) {
+        // Cleanup test session on error
+        await browserService.closeBrowser(testSessionId);
+        throw testError;
+      }
+    } catch (error) {
+      logger.error("Stealth test failed:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        type: "stealth-test-error",
       });
     }
   });
