@@ -26,7 +26,9 @@ if str(browser_use_path) not in sys.path:
 # Import browser-use components - using full project capabilities
 try:
     from browser_use import Agent
-    from browser_use.llm import ChatAzureOpenAI, ChatOpenAI, ChatGoogle
+    from browser_use.llm import ChatAzureOpenAI, ChatOpenAI, ChatGoogle, ChatAnthropic, ChatAnthropicBedrock
+    from browser_use.llm.aws.chat_anthropic import ChatAnthropicBedrock as AWSChatAnthropicBedrock
+    from browser_use.llm.aws.chat_bedrock import ChatAWSBedrock
     from browser_use.browser.session import BrowserSession
 except ImportError as e:
     print(f"❌ Failed to import browser_use: {e}")
@@ -69,6 +71,16 @@ class UnifiedBrowserUseAgent:
         # Google AI fallback
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
         
+        # Claude API configuration
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.claude_model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+        
+        # AWS Bedrock Claude configuration
+        self.aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        self.aws_region = os.getenv("AWS_REGION", "us-east-1")
+        self.aws_bedrock_model = os.getenv("AWS_BEDROCK_MODEL", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+        
         # LLM provider preference
         self.llm_provider = os.getenv("LLM_PROVIDER", "azure").lower()
         
@@ -107,9 +119,43 @@ class UnifiedBrowserUseAgent:
             )
             print("🤖 Using Google Gemini 2.0 Flash")
             
+        elif self.llm_provider == "claude" and self.anthropic_api_key:
+            self.llm = ChatAnthropic(
+                model=self.claude_model,
+                api_key=self.anthropic_api_key,
+                temperature=0.7
+            )
+            print(f"🤖 Using Claude Direct API - Model: {self.claude_model}")
+            
+        elif self.llm_provider == "aws-bedrock" and all([self.aws_access_key_id, self.aws_secret_access_key, self.aws_region]):
+            self.llm = AWSChatAnthropicBedrock(
+                model=self.aws_bedrock_model,
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+                aws_region=self.aws_region,
+                temperature=0.7
+            )
+            print(f"🤖 Using AWS Bedrock Claude - Model: {self.aws_bedrock_model}")
+            
         else:
-            # Fallback to Azure if configured
-            if all([self.azure_api_key, self.azure_endpoint, self.azure_deployment]):
+            # Enhanced fallback logic - try Claude first, then others
+            if self.anthropic_api_key:
+                self.llm = ChatAnthropic(
+                    model=self.claude_model,
+                    api_key=self.anthropic_api_key,
+                    temperature=0.7
+                )
+                print(f"🤖 Fallback to Claude Direct API - Model: {self.claude_model}")
+            elif all([self.aws_access_key_id, self.aws_secret_access_key, self.aws_region]):
+                self.llm = AWSChatAnthropicBedrock(
+                    model=self.aws_bedrock_model,
+                    aws_access_key_id=self.aws_access_key_id,
+                    aws_secret_access_key=self.aws_secret_access_key,
+                    aws_region=self.aws_region,
+                    temperature=0.7
+                )
+                print(f"🤖 Fallback to AWS Bedrock Claude - Model: {self.aws_bedrock_model}")
+            elif all([self.azure_api_key, self.azure_endpoint, self.azure_deployment]):
                 self.llm = ChatAzureOpenAI(
                     model=self.azure_deployment,
                     api_key=self.azure_api_key,
@@ -120,7 +166,7 @@ class UnifiedBrowserUseAgent:
                 )
                 print(f"🤖 Fallback to Azure OpenAI - Deployment: {self.azure_deployment}")
             else:
-                raise ValueError("No valid LLM configuration found. Please set up Azure OpenAI, OpenAI, or Google AI credentials.")
+                raise ValueError("No valid LLM configuration found. Please set up Claude (ANTHROPIC_API_KEY), AWS Bedrock, Azure OpenAI, OpenAI, or Google AI credentials.")
     
     async def create_agent(self, task: str, browser_context_id: str | None = None, max_steps: int = 10):
         """
@@ -471,9 +517,9 @@ async def main():
     print("🚀 [TESTING] Python browser_use_agent.py started")
     print(f"🔍 [TESTING] Command line arguments: {sys.argv}")
     print(f"🔍 [TESTING] Environment variables:")
-    for key in ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT_NAME', 'LLM_PROVIDER', 'PYTHONPATH']:
+    for key in ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT_NAME', 'ANTHROPIC_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'LLM_PROVIDER', 'PYTHONPATH']:
         value = os.getenv(key, 'NOT_SET')
-        if key == 'AZURE_OPENAI_API_KEY' and value != 'NOT_SET':
+        if key in ['AZURE_OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY'] and value != 'NOT_SET':
             value = f"{value[:10]}...{value[-4:]}" if len(value) > 14 else "***"
         print(f"  {key}: {value}")
     
@@ -487,6 +533,21 @@ async def main():
         print("🚀 NEW: Auto-session creation and API execution:")
         print("  python browser_use_agent.py 'go to youtube' --api")
         print("  python browser_use_agent.py 'search google' 10 --api")
+        print("")
+        print("🤖 LLM Provider Configuration (set LLM_PROVIDER environment variable):")
+        print("  LLM_PROVIDER=claude         - Use Claude Direct API (requires ANTHROPIC_API_KEY)")
+        print("  LLM_PROVIDER=aws-bedrock    - Use AWS Bedrock Claude (requires AWS credentials)")
+        print("  LLM_PROVIDER=azure          - Use Azure OpenAI (default)")
+        print("  LLM_PROVIDER=openai         - Use OpenAI API")
+        print("  LLM_PROVIDER=google         - Use Google Gemini")
+        print("")
+        print("🔑 Claude Environment Variables:")
+        print("  ANTHROPIC_API_KEY           - Your Anthropic Claude API key")
+        print("  CLAUDE_MODEL                - Claude model (default: claude-3-5-sonnet-20241022)")
+        print("  AWS_ACCESS_KEY_ID           - AWS access key for Bedrock")
+        print("  AWS_SECRET_ACCESS_KEY       - AWS secret key for Bedrock")
+        print("  AWS_REGION                  - AWS region (default: us-east-1)")
+        print("  AWS_BEDROCK_MODEL           - Bedrock model ID (default: us.anthropic.claude-3-5-sonnet-20241022-v2:0)")
         return
     
     # Parse arguments and handle --api flag
